@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 12px;
+    margin: 0;
+    padding: 12px;
+    background: var(--figma-color-bg);
+    color: var(--figma-color-text);
+  }
+  h2 { font-size: 13px; margin: 0 0 10px; font-weight: 600; }
+  h3 { font-size: 11px; margin: 0 0 6px; font-weight: 400; color: var(--figma-color-text-secondary); }
+
+  section { margin-bottom: 12px; }
+
+  .row { display: flex; gap: 8px; align-items: center; }
+
+  select {
+    appearance: none;
+    -webkit-appearance: none;
+    padding: 5px 28px 5px 8px;
+    border: 1px solid var(--figma-color-border);
+    border-radius: 4px;
+    font-size: 11px;
+    color: var(--figma-color-text);
+    width: 100%;
+    background-color: var(--figma-color-bg);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='none' viewBox='0 0 12 12'%3E%3Cpath stroke='%23888' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M3 4.5 6 7.5 9 4.5'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    background-size: 12px;
+  }
+
+  button {
+    background: var(--figma-color-bg-brand);
+    color: var(--figma-color-text-onbrand);
+    border: none;
+    border-radius: 6px;
+    padding: 7px 12px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  button:hover { background: var(--figma-color-bg-brand-hover); }
+  button.secondary {
+    background: var(--figma-color-bg-secondary);
+    color: var(--figma-color-text);
+  }
+  button.secondary:hover { background: var(--figma-color-bg-hover); }
+  button:disabled { opacity: 0.4; cursor: default; }
+  button.link {
+    background: none;
+    color: var(--figma-color-text-brand);
+    padding: 0;
+    font-size: 11px;
+  }
+
+  .info-tip {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    border: 1px solid var(--figma-color-border);
+    border-radius: 50%;
+    color: var(--figma-color-text-secondary);
+    font-size: 9px;
+    font-style: italic;
+    font-weight: 600;
+    line-height: 1;
+    cursor: default;
+    flex-shrink: 0;
+  }
+  .info-tip-text {
+    display: none;
+    position: absolute;
+    left: 0;
+    top: calc(100% + 6px);
+    z-index: 20;
+    width: 260px;
+    padding: 8px;
+    border: 1px solid var(--figma-color-border);
+    border-radius: 6px;
+    background: var(--figma-color-bg);
+    color: var(--figma-color-text);
+    font-size: 11px;
+    font-style: normal;
+    font-weight: 400;
+    line-height: 1.4;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  }
+  .info-tip:hover .info-tip-text,
+  .info-tip:focus .info-tip-text {
+    display: block;
+  }
+
+  .empty-note {
+    padding: 8px; color: var(--figma-color-text-secondary); font-size: 11px;
+  }
+
+  .callout {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 12px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: var(--figma-color-bg-brand-tertiary, var(--figma-color-bg-secondary));
+    color: var(--figma-color-text);
+    font-size: 11px;
+    line-height: 1.4;
+  }
+  .callout svg {
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    color: var(--figma-color-icon-brand, var(--figma-color-bg-brand));
+  }
+
+  #status {
+    font-size: 11px;
+    color: var(--figma-color-text-secondary);
+    margin: 8px 0;
+    min-height: 14px;
+  }
+  #status.error { color: var(--figma-color-text-danger); }
+
+  table {
+    width: 100%;
+    table-layout: fixed;
+    border-collapse: separate;
+    border-spacing: 0;
+  }
+  th, td {
+    text-align: left;
+    padding: 5px 6px;
+    border-bottom: 1px solid var(--figma-color-border);
+    font-size: 11px;
+    vertical-align: middle;
+  }
+  th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    color: var(--figma-color-text-secondary);
+    font-weight: 500;
+    background: var(--figma-color-bg);
+  }
+  .unmatched { color: var(--figma-color-text-danger); }
+  select.token-select.unmatched { color: var(--figma-color-text-danger); }
+  .value { font-variant-numeric: tabular-nums; }
+
+  select.token-select {
+    max-width: 260px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  #results {
+    max-height: 380px;
+    overflow: auto;
+    border: 1px solid var(--figma-color-border);
+    border-radius: 4px;
+  }
+  td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  td.value, td.count { white-space: nowrap; }
+
+  .actions { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
+
+  .progress-track {
+    height: 4px;
+    border-radius: 2px;
+    background: var(--figma-color-bg-secondary);
+    overflow: hidden;
+    margin: 4px 0 8px;
+    display: none;
+  }
+  .progress-track.active { display: block; }
+  .progress-fill {
+    height: 100%;
+    background: var(--figma-color-bg-brand);
+    width: 0%;
+    transition: width 0.1s linear;
+  }
+</style>
+</head>
+<body>
+  <h2>Design Tokens Converter</h2>
+  <div class="callout" role="note">
+    <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <circle cx="8" cy="8" r="6.25" stroke="currentColor" stroke-width="1.5"/>
+      <path d="M8 7.25v4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      <circle cx="8" cy="5.15" r="0.85" fill="currentColor"/>
+    </svg>
+    <span>Supports spacing tokens only (padding and gap).</span>
+  </div>
+
+  <section>
+    <div class="row" style="justify-content: space-between; margin-bottom: 4px;">
+      <div class="row" style="gap: 6px;">
+        <h3 style="margin:0;">1. Library</h3>
+        <span class="info-tip" tabindex="0" aria-label="Enable your semantic-token file as a team library first (Assets panel → Libraries), then pick its collection(s) above and scan.">i<span class="info-tip-text">Enable your semantic-token file as a team library first (Assets panel → Libraries), then pick its collection(s) above and scan.</span></span>
+      </div>
+      <button class="link" id="refreshBtn" type="button">Refresh</button>
+    </div>
+    <select id="librarySelect">
+      <option value="">Loading libraries…</option>
+    </select>
+  </section>
+
+  <section>
+    <h3>2. Collection</h3>
+    <select id="collectionSelect">
+      <option value="">None selected</option>
+    </select>
+  </section>
+
+  <section>
+    <h3>3. Scope</h3>
+    <select id="scope">
+      <option value="selection">Current selection</option>
+      <option value="page">Whole page</option>
+    </select>
+  </section>
+
+  <div class="actions">
+    <button id="scanBtn">Scan</button>
+    <button id="applyBtn" class="secondary" disabled>Apply selected matches</button>
+    <button id="cancelBtn" class="secondary" type="button" style="display:none;">Cancel</button>
+    <button id="selectAllBtn" class="link" type="button" style="display:none;">Select all matched</button>
+    <button id="selectNoneBtn" class="link" type="button" style="display:none;">Select none</button>
+  </div>
+
+  <div class="progress-track" id="progressTrack"><div class="progress-fill" id="progressFill"></div></div>
+
+  <div id="status"></div>
+
+  <div id="results"></div>
+
+<script>
+  const scanBtn = document.getElementById('scanBtn');
+  const applyBtn = document.getElementById('applyBtn');
+  const cancelBtn = document.getElementById('cancelBtn');
+  const refreshBtn = document.getElementById('refreshBtn');
+  const selectAllBtn = document.getElementById('selectAllBtn');
+  const selectNoneBtn = document.getElementById('selectNoneBtn');
+  const statusEl = document.getElementById('status');
+  const resultsEl = document.getElementById('results');
+  const librarySelect = document.getElementById('librarySelect');
+  const collectionSelect = document.getElementById('collectionSelect');
+  const progressTrack = document.getElementById('progressTrack');
+  const progressFill = document.getElementById('progressFill');
+
+  let libraries = [];
+  let currentGroups = []; // each: { key, field, value, count, matches, included, selectedVariableId }
+  let allTokens = [];
+  let scanning = false;
+
+  function setScanIdle() {
+    scanning = false;
+    scanBtn.textContent = 'Scan';
+    scanBtn.disabled = false;
+  }
+
+  function setStatus(text, isError) {
+    statusEl.textContent = text;
+    statusEl.classList.toggle('error', !!isError);
+  }
+
+  function setProgress(active, pct) {
+    progressTrack.classList.toggle('active', !!active);
+    progressFill.style.width = (pct || 0) + '%';
+  }
+
+  const DEFAULT_LIBRARY_NAME = 'Common Semantics';
+  const SPACING_COLLECTION_NAME = 'Spacing';
+
+  function isSpacingCollection(c) {
+    return c.name.toLowerCase() === SPACING_COLLECTION_NAME.toLowerCase();
+  }
+
+  // Libraries that contain an exact "Spacing" collection, mapped name → that collection.
+  function getSpacingLibraries() {
+    const byName = new Map();
+    libraries.forEach((c) => {
+      if (!isSpacingCollection(c)) return;
+      const name = c.libraryName || 'Library';
+      if (!byName.has(name)) byName.set(name, c);
+    });
+    return byName;
+  }
+
+  function renderLibrarySelect() {
+    const spacingLibraries = getSpacingLibraries();
+    const names = Array.from(spacingLibraries.keys());
+    const previousLibrary = librarySelect.value;
+    const previousCollectionKey = collectionSelect.value;
+    if (names.length === 0) {
+      librarySelect.innerHTML = '<option value="">No libraries with a Spacing collection</option>';
+      librarySelect.disabled = true;
+      renderCollectionSelect();
+      return;
+    }
+    librarySelect.disabled = false;
+    librarySelect.innerHTML = '<option value="">Select a library…</option>' +
+      names.map((n) => `<option value="${escapeAttr(n)}">${escapeHtml(n)}</option>`).join('');
+    const keepPrevious = previousLibrary && names.includes(previousLibrary);
+    if (keepPrevious) {
+      librarySelect.value = previousLibrary;
+    } else {
+      const defaultName = names.find((n) => n.toLowerCase() === DEFAULT_LIBRARY_NAME.toLowerCase());
+      librarySelect.value = defaultName || (names.length === 1 ? names[0] : '');
+    }
+    renderCollectionSelect(keepPrevious ? previousCollectionKey : null);
+  }
+
+  function getCollectionsInLibrary(libraryName) {
+    if (!libraryName) return [];
+    return libraries.filter((c) => (c.libraryName || 'Library') === libraryName);
+  }
+
+  function renderCollectionSelect(preferredKey) {
+    const collections = getCollectionsInLibrary(librarySelect.value);
+    if (collections.length === 0) {
+      collectionSelect.innerHTML = '<option value="">None selected</option>';
+      collectionSelect.disabled = true;
+      return;
+    }
+    collectionSelect.disabled = false;
+    collectionSelect.innerHTML = collections.map((c) =>
+      `<option value="${escapeAttr(c.key)}">${escapeHtml(c.name)}</option>`
+    ).join('');
+    const defaultCol = collections.find((c) => isSpacingCollection(c));
+    if (preferredKey && collections.some((c) => c.key === preferredKey)) {
+      collectionSelect.value = preferredKey;
+    } else if (defaultCol) {
+      collectionSelect.value = defaultCol.key;
+    }
+  }
+
+  librarySelect.onchange = () => renderCollectionSelect();
+
+  refreshBtn.onclick = () => {
+    librarySelect.innerHTML = '<option value="">Loading libraries…</option>';
+    collectionSelect.innerHTML = '<option value="">None selected</option>';
+    collectionSelect.disabled = true;
+    parent.postMessage({ pluginMessage: { type: 'refresh-libraries' } }, '*');
+  };
+
+  scanBtn.onclick = () => {
+    if (scanning) {
+      scanBtn.disabled = true;
+      setStatus('Cancelling…');
+      parent.postMessage({ pluginMessage: { type: 'cancel' } }, '*');
+      return;
+    }
+    const collectionKey = collectionSelect.value;
+    if (!collectionKey) {
+      setStatus('Pick a library and collection first.', true);
+      return;
+    }
+    const collectionKeys = [collectionKey];
+    setStatus('Scanning…');
+    scanning = true;
+    scanBtn.textContent = 'Stop scanning';
+    scanBtn.disabled = false;
+    applyBtn.disabled = true;
+    selectAllBtn.style.display = 'none';
+    selectNoneBtn.style.display = 'none';
+    resultsEl.innerHTML = '';
+    parent.postMessage({
+      pluginMessage: {
+        type: 'scan',
+        scope: document.getElementById('scope').value,
+        collectionKeys,
+      }
+    }, '*');
+  };
+
+  applyBtn.onclick = () => {
+    const selections = currentGroups
+      .filter((g) => g.included && g.selectedVariableId)
+      .map((g) => ({ key: g.key, variableId: g.selectedVariableId }));
+    if (selections.length === 0) return;
+    setStatus('Applying…');
+    setProgress(true, 0);
+    applyBtn.disabled = true;
+    scanBtn.disabled = true;
+    cancelBtn.style.display = '';
+    parent.postMessage({ pluginMessage: { type: 'apply', selections } }, '*');
+  };
+
+  cancelBtn.onclick = () => {
+    cancelBtn.disabled = true;
+    setStatus('Cancelling…');
+    parent.postMessage({ pluginMessage: { type: 'cancel' } }, '*');
+  };
+
+  selectAllBtn.onclick = () => {
+    currentGroups.forEach((g) => { if (g.matches.length > 0) g.included = true; });
+    syncRowCheckboxes();
+  };
+  selectNoneBtn.onclick = () => {
+    currentGroups.forEach((g) => { g.included = false; });
+    syncRowCheckboxes();
+  };
+
+  function syncRowCheckboxes() {
+    resultsEl.querySelectorAll('tr[data-key]').forEach((row) => {
+      const key = row.dataset.key;
+      const g = currentGroups.find((x) => x.key === key);
+      const cb = row.querySelector('input[type="checkbox"]');
+      if (g && cb) cb.checked = g.included;
+    });
+    updateApplyEnabled();
+  }
+
+  function updateApplyEnabled() {
+    applyBtn.disabled = !currentGroups.some((g) => g.included && g.selectedVariableId);
+  }
+
+  function formatPx(n) {
+    if (typeof n !== 'number' || !isFinite(n)) return '';
+    const rounded = Math.round(n * 100) / 100;
+    return String(rounded) + 'px';
+  }
+
+  function overwriteTokenOptionsHtml() {
+    return allTokens.map((m) =>
+      `<option value="${escapeAttr(m.id)}">${escapeHtml(m.name)} (${formatPx(m.value)})</option>`
+    ).join('');
+  }
+
+  function renderGroups(groups) {
+    currentGroups = groups.map((g) => ({
+      ...g,
+      included: g.matches.length > 0,
+      selectedVariableId: g.matches.length > 0 ? g.matches[0].id : null,
+    }));
+
+    if (currentGroups.length === 0) {
+      resultsEl.innerHTML = '<div class="empty-note">No raw spacing values found — everything is already tokenized, or nothing matched the scan scope.</div>';
+      selectAllBtn.style.display = 'none';
+      selectNoneBtn.style.display = 'none';
+      updateApplyEnabled();
+      return;
+    }
+
+    selectAllBtn.style.display = '';
+    selectNoneBtn.style.display = '';
+
+    const overwriteOptions = overwriteTokenOptionsHtml();
+    let html = '<table><colgroup><col style="width:28px"><col style="width:130px"><col style="width:70px"><col style="width:90px"><col></colgroup>' +
+      '<thead><tr><th></th><th>Field</th><th>Value</th><th>Nodes</th><th>Token</th></tr></thead><tbody>';
+    for (const g of currentGroups) {
+      const hasMatches = g.matches.length > 0;
+      html += `<tr data-key="${escapeAttr(g.key)}">
+        <td><input type="checkbox" ${g.included ? 'checked' : ''} ${hasMatches ? '' : 'disabled'} /></td>
+        <td>${escapeHtml(g.field)}</td>
+        <td class="value">${formatPx(g.value)}</td>
+        <td class="count">${g.count.toLocaleString()}</td>
+        <td>`;
+      if (hasMatches) {
+        html += `<select class="token-select">${g.matches.map((m, i) =>
+          `<option value="${escapeAttr(m.id)}" ${i === 0 ? 'selected' : ''}>${escapeHtml(m.name)} (${escapeHtml(m.collection)})</option>`
+        ).join('')}</select>`;
+      } else if (overwriteOptions) {
+        html += `<select class="token-select unmatched">
+          <option value="">no matching token</option>
+          <option disabled>Overwrite with…</option>
+          ${overwriteOptions}
+        </select>`;
+      } else {
+        html += `<span class="unmatched">no matching token</span>`;
+      }
+      html += `</td></tr>`;
+    }
+    html += '</tbody></table>';
+    resultsEl.innerHTML = html;
+    updateApplyEnabled();
+  }
+
+  // Event delegation: checkbox toggles and token-select changes update the
+  // in-memory currentGroups model, which apply() reads from directly.
+  resultsEl.addEventListener('change', (e) => {
+    const row = e.target.closest('tr[data-key]');
+    if (!row) return;
+    const g = currentGroups.find((x) => x.key === row.dataset.key);
+    if (!g) return;
+    if (e.target.matches('input[type="checkbox"]')) {
+      g.included = e.target.checked;
+    } else if (e.target.matches('select.token-select')) {
+      g.selectedVariableId = e.target.value || null;
+      const isOverwrite = g.matches.length === 0;
+      if (isOverwrite) {
+        g.included = !!g.selectedVariableId;
+        e.target.classList.toggle('unmatched', !g.selectedVariableId);
+        const cb = row.querySelector('input[type="checkbox"]');
+        if (cb) {
+          cb.disabled = !g.selectedVariableId;
+          cb.checked = g.included;
+        }
+      }
+    }
+    updateApplyEnabled();
+  });
+
+  function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = String(str == null ? '' : str);
+    return div.innerHTML;
+  }
+  function escapeAttr(str) {
+    return escapeHtml(str).replace(/"/g, '&quot;');
+  }
+
+  window.onmessage = (event) => {
+    const msg = event.data.pluginMessage;
+    if (!msg) return;
+
+    if (msg.type === 'libraries') {
+      libraries = msg.libraries || [];
+      renderLibrarySelect();
+      if (getSpacingLibraries().size === 0) {
+        setStatus('No enabled library has a collection named Spacing.', true);
+      } else {
+        setStatus('');
+      }
+    } else if (msg.type === 'scan-result') {
+      setScanIdle();
+      allTokens = (msg.tokens || []).slice().sort((a, b) => a.value - b.value || a.name.localeCompare(b.name));
+      setStatus(`Found ${msg.tokenCount} spacing token(s) · scanned ${msg.scannedNodeCount.toLocaleString()} auto-layout node(s) · ${msg.rawValueCount.toLocaleString()} raw value(s) across ${msg.groups.length} distinct field/value group(s).`);
+      renderGroups(msg.groups);
+    } else if (msg.type === 'scan-cancelled') {
+      setScanIdle();
+      updateApplyEnabled();
+      setStatus('Scan cancelled.');
+    } else if (msg.type === 'apply-progress') {
+      const pct = msg.total ? Math.round((msg.done / msg.total) * 100) : 0;
+      setProgress(true, pct);
+      setStatus(`Applying… ${msg.done.toLocaleString()} / ${msg.total.toLocaleString()} nodes`);
+    } else if (msg.type === 'apply-result') {
+      setProgress(false, 0);
+      setScanIdle();
+      cancelBtn.style.display = 'none';
+      cancelBtn.disabled = false;
+      const parts = [`Bound ${msg.successNodes.toLocaleString()} node(s)`];
+      if (msg.failedNodes) parts.push(`${msg.failedNodes} failed`);
+      if (msg.missingGroups) parts.push(`${msg.missingGroups} group(s) out of date — rescan and try again`);
+      if (msg.cancelled) parts.push('cancelled — partial changes were kept, rescan to see what remains');
+      setStatus(parts.join(' · '));
+      scanBtn.click();
+    } else if (msg.type === 'error') {
+      setProgress(false, 0);
+      setScanIdle();
+      cancelBtn.style.display = 'none';
+      cancelBtn.disabled = false;
+      updateApplyEnabled();
+      setStatus(msg.message, true);
+    }
+  };
+</script>
+</body>
+</html>
