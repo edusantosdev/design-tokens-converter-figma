@@ -170,7 +170,20 @@
   td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   td.value, td.count { white-space: nowrap; }
 
-  .actions { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
+  .actions { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; flex-wrap: wrap; }
+
+  .round-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--figma-color-text);
+    cursor: pointer;
+    user-select: none;
+  }
+  .round-toggle input { margin: 0; }
+  .value.rounded { color: var(--figma-color-text-brand); }
+  .value .round-arrow { color: var(--figma-color-text-secondary); padding: 0 2px; }
 
   .progress-track {
     height: 4px;
@@ -234,6 +247,11 @@
     <button id="cancelBtn" class="secondary" type="button" style="display:none;">Cancel</button>
     <button id="selectAllBtn" class="link" type="button" style="display:none;">Select all matched</button>
     <button id="selectNoneBtn" class="link" type="button" style="display:none;">Select none</button>
+    <label id="roundToggleLabel" class="round-toggle" style="display:none;">
+      <input type="checkbox" id="roundToggle" />
+      <span>Round decimals to nearest token</span>
+      <span class="info-tip" tabindex="0" aria-label="For values with no exact token (e.g. 31.88px), round to the nearest whole number and, if a token exists at that value (e.g. 32px), offer it as a match. Applying binds the token, so the node value snaps to it.">i<span class="info-tip-text">For values with no exact token (e.g. 31.88px), round to the nearest whole number and, if a token exists at that value (e.g. 32px), offer it as a match. Applying binds the token, so the node's value snaps to the token's value.</span></span>
+    </label>
   </div>
 
   <div class="progress-track" id="progressTrack"><div class="progress-fill" id="progressFill"></div></div>
@@ -249,6 +267,8 @@
   const refreshBtn = document.getElementById('refreshBtn');
   const selectAllBtn = document.getElementById('selectAllBtn');
   const selectNoneBtn = document.getElementById('selectNoneBtn');
+  const roundToggle = document.getElementById('roundToggle');
+  const roundToggleLabel = document.getElementById('roundToggleLabel');
   const statusEl = document.getElementById('status');
   const resultsEl = document.getElementById('results');
   const librarySelect = document.getElementById('librarySelect');
@@ -257,8 +277,11 @@
   const progressFill = document.getElementById('progressFill');
 
   let libraries = [];
-  let currentGroups = []; // each: { key, field, value, count, matches, included, selectedVariableId }
+  let serverGroups = []; // raw groups from the last scan (matches = exact matches only)
+  let currentGroups = []; // each: { key, field, value, count, matches, included, selectedVariableId, rounded, roundedValue }
   let allTokens = [];
+  let tokensByValue = new Map(); // resolved token value -> [{ id, name, collection, value }]
+  let roundEnabled = false;
   let scanning = false;
 
   // Apply elapsed-time tracking. applyBaseStatus holds the latest progress text
@@ -411,6 +434,7 @@
     applyBtn.disabled = true;
     selectAllBtn.style.display = 'none';
     selectNoneBtn.style.display = 'none';
+    roundToggleLabel.style.display = 'none';
     resultsEl.innerHTML = '';
     parent.postMessage({
       pluginMessage: {
@@ -449,6 +473,11 @@
     syncRowCheckboxes();
   };
 
+  roundToggle.onchange = () => {
+    roundEnabled = roundToggle.checked;
+    renderGroups();
+  };
+
   function syncRowCheckboxes() {
     resultsEl.querySelectorAll('tr[data-key]').forEach((row) => {
       const key = row.dataset.key;
@@ -475,12 +504,66 @@
     ).join('');
   }
 
-  function renderGroups(groups) {
-    currentGroups = groups.map((g) => ({
-      ...g,
-      included: g.matches.length > 0,
-      selectedVariableId: g.matches.length > 0 ? g.matches[0].id : null,
-    }));
+  function buildTokenValueMap() {
+    tokensByValue = new Map();
+    for (const t of allTokens) {
+      if (!tokensByValue.has(t.value)) tokensByValue.set(t.value, []);
+      tokensByValue.get(t.value).push(t);
+    }
+  }
+
+  function isRoundable(g) {
+    return g.matches.length === 0 && typeof g.value === 'number'
+      && isFinite(g.value) && !Number.isInteger(g.value);
+  }
+
+  // Given a raw scan group (exact matches only), work out the matches to show:
+  // its exact matches, or — when rounding is on and it has none — the tokens
+  // sitting at the nearest whole-number value, if any exist.
+  function resolveMatches(g) {
+    if (g.matches.length > 0) return { matches: g.matches, rounded: false, roundedValue: null };
+    if (roundEnabled && isRoundable(g)) {
+      const rounded = Math.round(g.value);
+      const toks = tokensByValue.get(rounded);
+      if (toks && toks.length) {
+        return {
+          matches: toks.map((t) => ({ id: t.id, name: t.name, collection: t.collection })),
+          rounded: true,
+          roundedValue: rounded,
+        };
+      }
+    }
+    return { matches: [], rounded: false, roundedValue: null };
+  }
+
+  function renderGroups() {
+    // Preserve the user's per-group choices across re-renders (e.g. toggling
+    // rounding) when the previously picked token is still a valid option.
+    const prev = new Map(currentGroups.map((g) => [g.key, { included: g.included, selectedVariableId: g.selectedVariableId }]));
+
+    currentGroups = serverGroups.map((g) => {
+      const resolved = resolveMatches(g);
+      const hasMatches = resolved.matches.length > 0;
+      let selectedVariableId = hasMatches ? resolved.matches[0].id : null;
+      let included = hasMatches;
+      const p = prev.get(g.key);
+      if (p && hasMatches) {
+        if (p.selectedVariableId && resolved.matches.some((m) => m.id === p.selectedVariableId)) {
+          selectedVariableId = p.selectedVariableId;
+        }
+        included = p.included;
+      }
+      return {
+        ...g,
+        matches: resolved.matches,
+        rounded: resolved.rounded,
+        roundedValue: resolved.roundedValue,
+        included,
+        selectedVariableId,
+      };
+    });
+
+    roundToggleLabel.style.display = serverGroups.some(isRoundable) ? '' : 'none';
 
     if (currentGroups.length === 0) {
       resultsEl.innerHTML = '<div class="empty-note">No raw spacing values found — everything is already tokenized, or nothing matched the scan scope.</div>';
@@ -494,19 +577,22 @@
     selectNoneBtn.style.display = '';
 
     const overwriteOptions = overwriteTokenOptionsHtml();
-    let html = '<table><colgroup><col style="width:28px"><col style="width:130px"><col style="width:70px"><col style="width:90px"><col></colgroup>' +
+    let html = '<table><colgroup><col style="width:28px"><col style="width:120px"><col style="width:120px"><col style="width:70px"><col></colgroup>' +
       '<thead><tr><th></th><th>Field</th><th>Value</th><th>Nodes</th><th>Token</th></tr></thead><tbody>';
     for (const g of currentGroups) {
       const hasMatches = g.matches.length > 0;
+      const valueCell = g.rounded
+        ? `<td class="value rounded" title="Rounded from ${escapeAttr(formatPx(g.value))} to ${escapeAttr(formatPx(g.roundedValue))}">${formatPx(g.value)}<span class="round-arrow">→</span>${formatPx(g.roundedValue)}</td>`
+        : `<td class="value">${formatPx(g.value)}</td>`;
       html += `<tr data-key="${escapeAttr(g.key)}">
         <td><input type="checkbox" ${g.included ? 'checked' : ''} ${hasMatches ? '' : 'disabled'} /></td>
         <td>${escapeHtml(g.field)}</td>
-        <td class="value">${formatPx(g.value)}</td>
+        ${valueCell}
         <td class="count">${g.count.toLocaleString()}</td>
         <td>`;
       if (hasMatches) {
         html += `<select class="token-select">${g.matches.map((m, i) =>
-          `<option value="${escapeAttr(m.id)}" ${i === 0 ? 'selected' : ''}>${escapeHtml(m.name)} (${escapeHtml(m.collection)})</option>`
+          `<option value="${escapeAttr(m.id)}" ${(g.selectedVariableId ? m.id === g.selectedVariableId : i === 0) ? 'selected' : ''}>${escapeHtml(m.name)} (${escapeHtml(m.collection)})</option>`
         ).join('')}</select>`;
       } else if (overwriteOptions) {
         html += `<select class="token-select unmatched">
@@ -573,8 +659,11 @@
     } else if (msg.type === 'scan-result') {
       setScanIdle();
       allTokens = (msg.tokens || []).slice().sort((a, b) => a.value - b.value || a.name.localeCompare(b.name));
+      buildTokenValueMap();
       setStatus(`Found ${msg.tokenCount} spacing token(s) · scanned ${msg.scannedNodeCount.toLocaleString()} auto-layout node(s) · ${msg.rawValueCount.toLocaleString()} raw value(s) across ${msg.groups.length} distinct field/value group(s).`);
-      renderGroups(msg.groups);
+      serverGroups = msg.groups || [];
+      currentGroups = [];
+      renderGroups();
     } else if (msg.type === 'scan-cancelled') {
       setScanIdle();
       updateApplyEnabled();

@@ -42,6 +42,13 @@ library file, so you can bind them in bulk instead of one at a time.
      covered by any published token yet.
    - "Select all matched" / "Select none" toggle every matchable group at
      once.
+   - **Round decimals to nearest token** — a toggle that appears whenever the
+     scan turns up non-integer values with no exact match (e.g. `31.88px`).
+     When enabled, each such value is rounded to the nearest whole number and,
+     if a token exists at that value (e.g. `32px`), it's offered as a match
+     and the row shows `31.88px → 32px`. Applying binds that token, which
+     snaps the node's value to the token's value. Toggling it is instant — no
+     rescan needed — and your per-row token picks are preserved across toggles.
 4. Uncheck anything you don't want touched, then **Apply selected matches**.
    Each checked group is bound in bulk to every node it covers — a group
    affecting 20,000 nodes is one operation, not 20,000. A progress bar
