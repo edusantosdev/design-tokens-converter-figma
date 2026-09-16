@@ -595,8 +595,11 @@
       if (msg.missingGroups) parts.push(`${msg.missingGroups} group(s) out of date — rescan and try again`);
       if (msg.cancelled) parts.push('cancelled — partial changes were kept, rescan to see what remains');
       parts.push(`in ${formatElapsed(elapsedMs)}`);
+      parts.push('scan again to refresh the list');
       setStatus(parts.join(' · '));
-      scanBtn.click();
+      // Keep the current results table so the user can review what was applied.
+      // The table stays until the user manually clicks Scan again.
+      updateApplyEnabled();
     } else if (msg.type === 'error') {
       setProgress(false, 0);
       stopApplyTimer();
