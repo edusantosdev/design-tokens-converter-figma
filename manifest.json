@@ -5,7 +5,7 @@
   "permissions": ["teamlibrary"],
   "main": "code.js",
   "ui": "ui.html",
-  "editorType": ["figma"],
+  "editorType": ["figma", "dev"],
   "documentAccess": "dynamic-page",
   "networkAccess": {
     "allowedDomains": ["none"]
