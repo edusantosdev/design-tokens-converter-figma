@@ -261,6 +261,12 @@
   let allTokens = [];
   let scanning = false;
 
+  // Apply elapsed-time tracking. applyBaseStatus holds the latest progress text
+  // so the ticking timer can re-render it with a fresh elapsed suffix.
+  let applyStartTime = null;
+  let applyTimer = null;
+  let applyBaseStatus = '';
+
   function setScanIdle() {
     scanning = false;
     scanBtn.textContent = 'Scan';
@@ -270,6 +276,39 @@
   function setStatus(text, isError) {
     statusEl.textContent = text;
     statusEl.classList.toggle('error', !!isError);
+  }
+
+  function formatElapsed(ms) {
+    const totalSeconds = Math.max(0, ms) / 1000;
+    if (totalSeconds < 60) return totalSeconds.toFixed(1) + 's';
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = Math.round(totalSeconds % 60);
+    return minutes + 'm ' + String(seconds).padStart(2, '0') + 's';
+  }
+
+  function renderApplyStatus() {
+    if (applyStartTime == null) return;
+    const elapsed = formatElapsed(Date.now() - applyStartTime);
+    setStatus(applyBaseStatus ? applyBaseStatus + ' · ' + elapsed : elapsed);
+  }
+
+  function startApplyTimer() {
+    applyStartTime = Date.now();
+    applyBaseStatus = 'Applying…';
+    if (applyTimer) clearInterval(applyTimer);
+    applyTimer = setInterval(renderApplyStatus, 100);
+    renderApplyStatus();
+  }
+
+  function stopApplyTimer() {
+    if (applyTimer) {
+      clearInterval(applyTimer);
+      applyTimer = null;
+    }
+    const elapsedMs = applyStartTime == null ? 0 : Date.now() - applyStartTime;
+    applyStartTime = null;
+    applyBaseStatus = '';
+    return elapsedMs;
   }
 
   function setProgress(active, pct) {
@@ -387,11 +426,11 @@
       .filter((g) => g.included && g.selectedVariableId)
       .map((g) => ({ key: g.key, variableId: g.selectedVariableId }));
     if (selections.length === 0) return;
-    setStatus('Applying…');
     setProgress(true, 0);
     applyBtn.disabled = true;
     scanBtn.disabled = true;
     cancelBtn.style.display = '';
+    startApplyTimer();
     parent.postMessage({ pluginMessage: { type: 'apply', selections } }, '*');
   };
 
@@ -543,9 +582,11 @@
     } else if (msg.type === 'apply-progress') {
       const pct = msg.total ? Math.round((msg.done / msg.total) * 100) : 0;
       setProgress(true, pct);
-      setStatus(`Applying… ${msg.done.toLocaleString()} / ${msg.total.toLocaleString()} nodes`);
+      applyBaseStatus = `Applying… ${msg.done.toLocaleString()} / ${msg.total.toLocaleString()} nodes`;
+      renderApplyStatus();
     } else if (msg.type === 'apply-result') {
       setProgress(false, 0);
+      const elapsedMs = stopApplyTimer();
       setScanIdle();
       cancelBtn.style.display = 'none';
       cancelBtn.disabled = false;
@@ -553,10 +594,12 @@
       if (msg.failedNodes) parts.push(`${msg.failedNodes} failed`);
       if (msg.missingGroups) parts.push(`${msg.missingGroups} group(s) out of date — rescan and try again`);
       if (msg.cancelled) parts.push('cancelled — partial changes were kept, rescan to see what remains');
+      parts.push(`in ${formatElapsed(elapsedMs)}`);
       setStatus(parts.join(' · '));
       scanBtn.click();
     } else if (msg.type === 'error') {
       setProgress(false, 0);
+      stopApplyTimer();
       setScanIdle();
       cancelBtn.style.display = 'none';
       cancelBtn.disabled = false;
