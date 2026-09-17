@@ -181,7 +181,16 @@
     cursor: pointer;
     user-select: none;
   }
-  .round-toggle input { margin: 0; }
+  .round-toggle input[type="checkbox"] { margin: 0; }
+  .round-toggle input[type="number"] {
+    width: 52px;
+    padding: 3px 6px;
+    border: 1px solid var(--figma-color-border);
+    border-radius: 4px;
+    background: var(--figma-color-bg);
+    color: var(--figma-color-text);
+    font-size: 11px;
+  }
   .value.rounded { color: var(--figma-color-text-brand); }
   .value .round-arrow { color: var(--figma-color-text-secondary); padding: 0 2px; }
 
@@ -249,8 +258,10 @@
     <button id="selectNoneBtn" class="link" type="button" style="display:none;">Select none</button>
     <label id="roundToggleLabel" class="round-toggle" style="display:none;">
       <input type="checkbox" id="roundToggle" />
-      <span>Round decimals to nearest token</span>
-      <span class="info-tip" tabindex="0" aria-label="For values with no exact token (e.g. 31.88px), round to the nearest whole number and, if a token exists at that value (e.g. 32px), offer it as a match. Applying binds the token, so the node value snaps to it.">i<span class="info-tip-text">For values with no exact token (e.g. 31.88px), round to the nearest whole number and, if a token exists at that value (e.g. 32px), offer it as a match. Applying binds the token, so the node's value snaps to the token's value.</span></span>
+      <span>Snap to nearest token within</span>
+      <input type="number" id="roundTolerance" min="0" step="0.5" value="2" />
+      <span>px</span>
+      <span class="info-tip" tabindex="0" aria-label="For values with no exact token, offer the closest token whose value is within this many px (e.g. 45.02px → 44px). Applying binds that token, so the node value snaps to it.">i<span class="info-tip-text">For values with no exact token, offer the closest token whose value is within this many px (e.g. 45.02px → 44px, 31.88px → 32px). If several tokens are within range they're listed nearest-first in the dropdown. Applying binds the chosen token, so the node's value snaps to the token's value.</span></span>
     </label>
   </div>
 
@@ -269,6 +280,7 @@
   const selectNoneBtn = document.getElementById('selectNoneBtn');
   const roundToggle = document.getElementById('roundToggle');
   const roundToggleLabel = document.getElementById('roundToggleLabel');
+  const roundTolerance = document.getElementById('roundTolerance');
   const statusEl = document.getElementById('status');
   const resultsEl = document.getElementById('results');
   const librarySelect = document.getElementById('librarySelect');
@@ -280,8 +292,8 @@
   let serverGroups = []; // raw groups from the last scan (matches = exact matches only)
   let currentGroups = []; // each: { key, field, value, count, matches, included, selectedVariableId, rounded, roundedValue }
   let allTokens = [];
-  let tokensByValue = new Map(); // resolved token value -> [{ id, name, collection, value }]
   let roundEnabled = false;
+  let roundTolerancePx = 2; // max px distance to snap an unmatched value to a token
   let scanning = false;
 
   // Apply elapsed-time tracking. applyBaseStatus holds the latest progress text
@@ -478,6 +490,12 @@
     renderGroups();
   };
 
+  roundTolerance.oninput = () => {
+    const parsed = parseFloat(roundTolerance.value);
+    roundTolerancePx = isFinite(parsed) && parsed >= 0 ? parsed : 0;
+    if (roundEnabled) renderGroups();
+  };
+
   function syncRowCheckboxes() {
     resultsEl.querySelectorAll('tr[data-key]').forEach((row) => {
       const key = row.dataset.key;
@@ -504,32 +522,33 @@
     ).join('');
   }
 
-  function buildTokenValueMap() {
-    tokensByValue = new Map();
-    for (const t of allTokens) {
-      if (!tokensByValue.has(t.value)) tokensByValue.set(t.value, []);
-      tokensByValue.get(t.value).push(t);
-    }
+  function tokenValueById(id) {
+    const t = allTokens.find((x) => x.id === id);
+    return t ? t.value : null;
   }
 
-  function isRoundable(g) {
-    return g.matches.length === 0 && typeof g.value === 'number'
-      && isFinite(g.value) && !Number.isInteger(g.value);
+  // Tokens within `tol` px of `value`, nearest-first (ties broken by value).
+  function nearestTokensWithin(value, tol) {
+    if (typeof value !== 'number' || !isFinite(value)) return [];
+    return allTokens
+      .map((t) => ({ t, dist: Math.abs(t.value - value) }))
+      .filter((c) => c.dist <= tol + 1e-9)
+      .sort((a, b) => a.dist - b.dist || a.t.value - b.t.value)
+      .map((c) => c.t);
   }
 
   // Given a raw scan group (exact matches only), work out the matches to show:
-  // its exact matches, or — when rounding is on and it has none — the tokens
-  // sitting at the nearest whole-number value, if any exist.
+  // its exact matches, or — when snapping is on and it has none — the nearest
+  // token(s) within tolerance, listed closest-first.
   function resolveMatches(g) {
     if (g.matches.length > 0) return { matches: g.matches, rounded: false, roundedValue: null };
-    if (roundEnabled && isRoundable(g)) {
-      const rounded = Math.round(g.value);
-      const toks = tokensByValue.get(rounded);
-      if (toks && toks.length) {
+    if (roundEnabled) {
+      const near = nearestTokensWithin(g.value, roundTolerancePx);
+      if (near.length) {
         return {
-          matches: toks.map((t) => ({ id: t.id, name: t.name, collection: t.collection })),
+          matches: near.map((t) => ({ id: t.id, name: t.name, collection: t.collection })),
           rounded: true,
-          roundedValue: rounded,
+          roundedValue: near[0].value,
         };
       }
     }
@@ -563,7 +582,7 @@
       };
     });
 
-    roundToggleLabel.style.display = serverGroups.some(isRoundable) ? '' : 'none';
+    roundToggleLabel.style.display = serverGroups.some((g) => g.matches.length === 0) ? '' : 'none';
 
     if (currentGroups.length === 0) {
       resultsEl.innerHTML = '<div class="empty-note">No raw spacing values found — everything is already tokenized, or nothing matched the scan scope.</div>';
@@ -591,9 +610,11 @@
         <td class="count">${g.count.toLocaleString()}</td>
         <td>`;
       if (hasMatches) {
-        html += `<select class="token-select">${g.matches.map((m, i) =>
-          `<option value="${escapeAttr(m.id)}" ${(g.selectedVariableId ? m.id === g.selectedVariableId : i === 0) ? 'selected' : ''}>${escapeHtml(m.name)} (${escapeHtml(m.collection)})</option>`
-        ).join('')}</select>`;
+        html += `<select class="token-select">${g.matches.map((m, i) => {
+          const label = g.rounded ? `${m.name} (${formatPx(tokenValueById(m.id))})` : `${m.name} (${m.collection})`;
+          const isSelected = g.selectedVariableId ? m.id === g.selectedVariableId : i === 0;
+          return `<option value="${escapeAttr(m.id)}" ${isSelected ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+        }).join('')}</select>`;
       } else if (overwriteOptions) {
         html += `<select class="token-select unmatched">
           <option value="">no matching token</option>
@@ -659,7 +680,6 @@
     } else if (msg.type === 'scan-result') {
       setScanIdle();
       allTokens = (msg.tokens || []).slice().sort((a, b) => a.value - b.value || a.name.localeCompare(b.name));
-      buildTokenValueMap();
       setStatus(`Found ${msg.tokenCount} spacing token(s) · scanned ${msg.scannedNodeCount.toLocaleString()} auto-layout node(s) · ${msg.rawValueCount.toLocaleString()} raw value(s) across ${msg.groups.length} distinct field/value group(s).`);
       serverGroups = msg.groups || [];
       currentGroups = [];
