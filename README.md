@@ -52,6 +52,14 @@ library file, so you can bind them in bulk instead of one at a time.
      override the pick. Applying binds the chosen token, which snaps the node's
      value to the token's value. Toggling and adjusting the tolerance are
      instant — no rescan needed — and per-row token picks are preserved.
+   - **Crosshair** — each row has a target control that selects a node from
+     that group and zooms the canvas to it, so you can tell regular UI spacing
+     from a scaled logo, illustration, or diagram that only happens to share
+     the same raw value. Click again (or use Prev / Next) to cycle through the
+     group. The inspector shows the node type and ancestor path. **Skip this
+     node** removes it from every matching group so Apply will not bind it.
+     The toolbar crosshair inspects the current canvas selection instead —
+     useful when you already have a suspect node in view.
 4. Uncheck anything you don't want touched, then **Apply selected matches**.
    Each checked group is bound in bulk to every node it covers — a group
    affecting 20,000 nodes is one operation, not 20,000. A progress bar

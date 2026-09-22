@@ -209,6 +209,63 @@
     width: 0%;
     transition: width 0.1s linear;
   }
+
+  button.icon {
+    background: none;
+    color: var(--figma-color-text-secondary);
+    padding: 2px;
+    width: 22px;
+    height: 22px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+  }
+  button.icon:hover { background: var(--figma-color-bg-hover); color: var(--figma-color-text); }
+  button.icon:disabled { opacity: 0.35; cursor: default; background: none; }
+  button.icon.active { color: var(--figma-color-text-brand); }
+  button.icon svg { width: 14px; height: 14px; display: block; }
+  button.icon-label {
+    width: auto;
+    height: auto;
+    padding: 4px 6px;
+    gap: 4px;
+    font-size: 11px;
+    color: var(--figma-color-text-brand);
+  }
+  button.icon-label:disabled { color: var(--figma-color-text-secondary); }
+  td.locate { width: 28px; padding-left: 2px; padding-right: 2px; }
+
+  tr.located td { background: var(--figma-color-bg-selected, var(--figma-color-bg-secondary)); }
+
+  #inspector {
+    display: none;
+    margin: 0 0 8px;
+    padding: 8px 10px;
+    border: 1px solid var(--figma-color-border);
+    border-radius: 6px;
+    background: var(--figma-color-bg-secondary);
+  }
+  #inspector.visible { display: block; }
+  .inspector-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .inspector-meta {
+    font-size: 11px;
+    color: var(--figma-color-text-secondary);
+    margin-bottom: 2px;
+  }
+  .inspector-path {
+    font-size: 11px;
+    line-height: 1.4;
+    word-break: break-word;
+    white-space: normal;
+  }
+  .inspector-actions { display: flex; gap: 6px; flex-shrink: 0; align-items: center; }
+  .inspector-actions button { padding: 4px 8px; font-size: 11px; }
 </style>
 </head>
 <body>
@@ -254,6 +311,13 @@
     <button id="scanBtn">Scan</button>
     <button id="applyBtn" class="secondary" disabled>Apply selected matches</button>
     <button id="cancelBtn" class="secondary" type="button" style="display:none;">Cancel</button>
+    <button id="inspectBtn" class="icon icon-label" type="button" title="Inspect the current canvas selection to see if it would be converted" style="display:none;">
+      <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="8" cy="8" r="3.1" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M8 1.75v2.4M8 11.85v2.4M1.75 8h2.4M11.85 8h2.4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      Inspect selection
+    </button>
     <button id="selectAllBtn" class="link" type="button" style="display:none;">Select all matched</button>
     <button id="selectNoneBtn" class="link" type="button" style="display:none;">Select none</button>
     <label id="roundToggleLabel" class="round-toggle" style="display:none;">
@@ -269,6 +333,20 @@
 
   <div id="status"></div>
 
+  <div id="inspector" aria-live="polite">
+    <div class="inspector-top">
+      <div>
+        <div class="inspector-meta" id="inspectorMeta"></div>
+        <div class="inspector-path" id="inspectorPath"></div>
+      </div>
+      <div class="inspector-actions">
+        <button class="secondary" id="inspectorPrev" type="button">Prev</button>
+        <button class="secondary" id="inspectorNext" type="button">Next</button>
+        <button class="secondary" id="inspectorSkip" type="button" title="Remove this node from the group so Apply will not bind it">Skip this node</button>
+      </div>
+    </div>
+  </div>
+
   <div id="results"></div>
 
 <script>
@@ -276,8 +354,15 @@
   const applyBtn = document.getElementById('applyBtn');
   const cancelBtn = document.getElementById('cancelBtn');
   const refreshBtn = document.getElementById('refreshBtn');
+  const inspectBtn = document.getElementById('inspectBtn');
   const selectAllBtn = document.getElementById('selectAllBtn');
   const selectNoneBtn = document.getElementById('selectNoneBtn');
+  const inspectorEl = document.getElementById('inspector');
+  const inspectorMeta = document.getElementById('inspectorMeta');
+  const inspectorPath = document.getElementById('inspectorPath');
+  const inspectorPrev = document.getElementById('inspectorPrev');
+  const inspectorNext = document.getElementById('inspectorNext');
+  const inspectorSkip = document.getElementById('inspectorSkip');
   const roundToggle = document.getElementById('roundToggle');
   const roundToggleLabel = document.getElementById('roundToggleLabel');
   const roundTolerance = document.getElementById('roundTolerance');
@@ -295,6 +380,92 @@
   let roundEnabled = false;
   let roundTolerancePx = 2; // max px distance to snap an unmatched value to a token
   let scanning = false;
+  let inspected = null; // { key, index, total, name, nodeType, path }
+
+  const CROSSHAIR_SVG = '<svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="3.1" stroke="currentColor" stroke-width="1.5"/><path d="M8 1.75v2.4M8 11.85v2.4M1.75 8h2.4M11.85 8h2.4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
+
+  function hideInspector() {
+    inspected = null;
+    inspectorEl.classList.remove('visible');
+    resultsEl.querySelectorAll('tr.located').forEach((row) => row.classList.remove('located'));
+    resultsEl.querySelectorAll('button.locate.active').forEach((btn) => btn.classList.remove('active'));
+  }
+
+  function requestLocate(key, index) {
+    parent.postMessage({ pluginMessage: { type: 'locate', key, index } }, '*');
+  }
+
+  function highlightLocatedRow(key, extraKeys) {
+    const keys = new Set([key].concat(extraKeys || []));
+    let primaryRow = null;
+    resultsEl.querySelectorAll('tr[data-key]').forEach((row) => {
+      const isHit = keys.has(row.dataset.key);
+      row.classList.toggle('located', isHit);
+      const btn = row.querySelector('button.locate');
+      if (btn) btn.classList.toggle('active', row.dataset.key === key);
+      if (row.dataset.key === key) primaryRow = row;
+    });
+    if (primaryRow) primaryRow.scrollIntoView({ block: 'nearest' });
+  }
+
+  function updateGroupCount(key, total) {
+    const g = currentGroups.find((x) => x.key === key);
+    const sg = serverGroups.find((x) => x.key === key);
+    if (g) g.count = total;
+    if (sg) sg.count = total;
+    resultsEl.querySelectorAll('tr[data-key]').forEach((row) => {
+      if (row.dataset.key !== key) return;
+      const count = row.querySelector('td.count');
+      if (count) count.textContent = total.toLocaleString();
+    });
+  }
+
+  function applyLocateResult(msg) {
+    if (msg.error) {
+      setStatus(msg.message || msg.error, true);
+      return;
+    }
+    const emptied = new Set(msg.emptiedKeys || []);
+    if (emptied.size) {
+      serverGroups = serverGroups.filter((g) => !emptied.has(g.key));
+    }
+    (msg.remainingCounts || []).forEach((entry) => updateGroupCount(entry.key, entry.total));
+
+    if (msg.total === 0) {
+      hideInspector();
+      renderGroups();
+      setStatus(msg.skipped ? 'Skipped the last node in that group.' : 'No nodes left in that group.');
+      return;
+    }
+
+    if (emptied.size) renderGroups();
+
+    inspected = {
+      key: msg.key,
+      index: msg.index,
+      total: msg.total,
+      name: msg.name,
+      nodeType: msg.nodeType,
+      path: msg.path,
+    };
+    const g = currentGroups.find((x) => x.key === msg.key);
+    if (g) g.locateIndex = msg.index;
+    updateGroupCount(msg.key, msg.total);
+
+    const extraHits = (msg.hits || []).filter((h) => h.key !== msg.key);
+    const hitNote = extraHits.length
+      ? ' · also in ' + extraHits.length + ' other group' + (extraHits.length === 1 ? '' : 's')
+      : '';
+    inspectorMeta.textContent = (msg.index + 1) + ' of ' + msg.total.toLocaleString() +
+      (msg.nodeType ? ' · ' + msg.nodeType : '') +
+      (msg.skipped ? ' · skipped previous' : '') +
+      hitNote;
+    inspectorPath.textContent = msg.path || msg.name || '';
+    inspectorEl.classList.add('visible');
+    highlightLocatedRow(msg.key, extraHits.map((h) => h.key));
+    inspectorPrev.disabled = msg.total < 2;
+    inspectorNext.disabled = msg.total < 2;
+  }
 
   // Apply elapsed-time tracking. applyBaseStatus holds the latest progress text
   // so the ticking timer can re-render it with a fresh elapsed suffix.
@@ -446,7 +617,9 @@
     applyBtn.disabled = true;
     selectAllBtn.style.display = 'none';
     selectNoneBtn.style.display = 'none';
+    inspectBtn.style.display = 'none';
     roundToggleLabel.style.display = 'none';
+    hideInspector();
     resultsEl.innerHTML = '';
     parent.postMessage({
       pluginMessage: {
@@ -483,6 +656,22 @@
   selectNoneBtn.onclick = () => {
     currentGroups.forEach((g) => { g.included = false; });
     syncRowCheckboxes();
+  };
+
+  inspectBtn.onclick = () => {
+    parent.postMessage({ pluginMessage: { type: 'inspect-selection' } }, '*');
+  };
+
+  inspectorPrev.onclick = () => {
+    if (!inspected || inspected.total < 1) return;
+    requestLocate(inspected.key, inspected.index - 1);
+  };
+  inspectorNext.onclick = () => {
+    if (!inspected || inspected.total < 1) return;
+    requestLocate(inspected.key, inspected.index + 1);
+  };
+  inspectorSkip.onclick = () => {
+    parent.postMessage({ pluginMessage: { type: 'skip-located' } }, '*');
   };
 
   roundToggle.onchange = () => {
@@ -558,7 +747,7 @@
   function renderGroups() {
     // Preserve the user's per-group choices across re-renders (e.g. toggling
     // rounding) when the previously picked token is still a valid option.
-    const prev = new Map(currentGroups.map((g) => [g.key, { included: g.included, selectedVariableId: g.selectedVariableId }]));
+    const prev = new Map(currentGroups.map((g) => [g.key, { included: g.included, selectedVariableId: g.selectedVariableId, locateIndex: g.locateIndex }]));
 
     currentGroups = serverGroups.map((g) => {
       const resolved = resolveMatches(g);
@@ -579,6 +768,7 @@
         roundedValue: resolved.roundedValue,
         included,
         selectedVariableId,
+        locateIndex: p && typeof p.locateIndex === 'number' ? p.locateIndex : -1,
       };
     });
 
@@ -588,26 +778,32 @@
       resultsEl.innerHTML = '<div class="empty-note">No raw spacing values found — everything is already tokenized, or nothing matched the scan scope.</div>';
       selectAllBtn.style.display = 'none';
       selectNoneBtn.style.display = 'none';
+      inspectBtn.style.display = 'none';
+      hideInspector();
       updateApplyEnabled();
       return;
     }
 
     selectAllBtn.style.display = '';
     selectNoneBtn.style.display = '';
+    inspectBtn.style.display = '';
 
     const overwriteOptions = overwriteTokenOptionsHtml();
-    let html = '<table><colgroup><col style="width:28px"><col style="width:120px"><col style="width:120px"><col style="width:70px"><col></colgroup>' +
-      '<thead><tr><th></th><th>Field</th><th>Value</th><th>Nodes</th><th>Token</th></tr></thead><tbody>';
+    const locatedKey = inspected ? inspected.key : '';
+    let html = '<table><colgroup><col style="width:28px"><col style="width:120px"><col style="width:110px"><col style="width:56px"><col style="width:28px"><col></colgroup>' +
+      '<thead><tr><th></th><th>Field</th><th>Value</th><th>Nodes</th><th></th><th>Token</th></tr></thead><tbody>';
     for (const g of currentGroups) {
       const hasMatches = g.matches.length > 0;
+      const isLocated = locatedKey && g.key === locatedKey;
       const valueCell = g.rounded
         ? `<td class="value rounded" title="Rounded from ${escapeAttr(formatPx(g.value))} to ${escapeAttr(formatPx(g.roundedValue))}">${formatPx(g.value)}<span class="round-arrow">→</span>${formatPx(g.roundedValue)}</td>`
         : `<td class="value">${formatPx(g.value)}</td>`;
-      html += `<tr data-key="${escapeAttr(g.key)}">
+      html += `<tr data-key="${escapeAttr(g.key)}" class="${isLocated ? 'located' : ''}">
         <td><input type="checkbox" ${g.included ? 'checked' : ''} ${hasMatches ? '' : 'disabled'} /></td>
         <td>${escapeHtml(g.field)}</td>
         ${valueCell}
         <td class="count">${g.count.toLocaleString()}</td>
+        <td class="locate"><button class="icon locate${isLocated ? ' active' : ''}" type="button" title="Show a node from this group on the canvas. Click again to cycle." aria-label="Show on canvas">${CROSSHAIR_SVG}</button></td>
         <td>`;
       if (hasMatches) {
         html += `<select class="token-select">${g.matches.map((m, i) => {
@@ -633,6 +829,17 @@
 
   // Event delegation: checkbox toggles and token-select changes update the
   // in-memory currentGroups model, which apply() reads from directly.
+  resultsEl.addEventListener('click', (e) => {
+    const btn = e.target.closest('button.locate');
+    if (!btn) return;
+    const row = btn.closest('tr[data-key]');
+    if (!row) return;
+    const g = currentGroups.find((x) => x.key === row.dataset.key);
+    if (!g || !g.count) return;
+    const next = ((g.locateIndex == null || g.locateIndex < 0 ? -1 : g.locateIndex) + 1) % g.count;
+    requestLocate(g.key, next);
+  });
+
   resultsEl.addEventListener('change', (e) => {
     const row = e.target.closest('tr[data-key]');
     if (!row) return;
@@ -683,7 +890,10 @@
       setStatus(`Found ${msg.tokenCount} spacing token(s) · scanned ${msg.scannedNodeCount.toLocaleString()} auto-layout node(s) · ${msg.rawValueCount.toLocaleString()} raw value(s) across ${msg.groups.length} distinct field/value group(s).`);
       serverGroups = msg.groups || [];
       currentGroups = [];
+      hideInspector();
       renderGroups();
+    } else if (msg.type === 'locate-result') {
+      applyLocateResult(msg);
     } else if (msg.type === 'scan-cancelled') {
       setScanIdle();
       updateApplyEnabled();

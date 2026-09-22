@@ -138,6 +138,7 @@ function getUnboundSpacingProps(node) {
 
 async function scan(msg) {
   cancelRequested = false;
+  lastLocated = null;
   if (!msg.collectionKeys || msg.collectionKeys.length === 0) {
     figma.ui.postMessage({
       type: "error",
@@ -227,9 +228,196 @@ async function scan(msg) {
   });
 }
 
+// ---- Inspect / locate -------------------------------------------------
+
+function liveNodes(group) {
+  if (!group) return [];
+  const live = group.nodes.filter((n) => n && !n.removed);
+  if (live.length !== group.nodes.length) group.nodes = live;
+  return live;
+}
+
+function ancestorPath(node, maxParts) {
+  const parts = [];
+  let current = node;
+  while (current && current.type !== "PAGE" && current.type !== "DOCUMENT") {
+    parts.unshift(current.name || current.type);
+    current = current.parent;
+    if (parts.length >= maxParts) {
+      if (current && current.type !== "PAGE" && current.type !== "DOCUMENT") {
+        parts[0] = "…";
+      }
+      break;
+    }
+  }
+  return parts.join(" › ");
+}
+
+async function ensureNodePage(node) {
+  let page = node.parent;
+  while (page && page.type !== "PAGE") page = page.parent;
+  if (page && page !== figma.currentPage) {
+    await figma.setCurrentPageAsync(page);
+  }
+}
+
+function locatePayload(node, key, index, total, extra) {
+  return Object.assign(
+    {
+      type: "locate-result",
+      key,
+      index,
+      total,
+      name: node.name,
+      nodeType: node.type,
+      path: ancestorPath(node, 6),
+    },
+    extra || {}
+  );
+}
+
+async function revealNode(node) {
+  await ensureNodePage(node);
+  figma.currentPage.selection = [node];
+  figma.viewport.scrollAndZoomIntoView([node]);
+}
+
+async function locate(msg) {
+  const group = lastScanGroups.get(msg.key);
+  const nodes = liveNodes(group);
+  if (nodes.length === 0) {
+    lastLocated = null;
+    figma.ui.postMessage({
+      type: "locate-result",
+      key: msg.key,
+      index: 0,
+      total: 0,
+      error: "No nodes left in this group.",
+    });
+    return;
+  }
+  const index = ((msg.index % nodes.length) + nodes.length) % nodes.length;
+  const node = nodes[index];
+  lastLocated = { key: msg.key, index, node };
+  await revealNode(node);
+  figma.notify((index + 1) + " / " + nodes.length + " · " + (node.name || node.type), { timeout: 2000 });
+  figma.ui.postMessage(locatePayload(node, msg.key, index, nodes.length));
+}
+
+async function skipLocated() {
+  if (!lastLocated) {
+    figma.ui.postMessage({
+      type: "locate-result",
+      error: "Nothing to skip — locate a node first.",
+    });
+    return;
+  }
+  const skippedNode = lastLocated.node;
+  const key = lastLocated.key;
+  const emptied = [];
+  const remaining = [];
+  for (const [groupKey, group] of lastScanGroups) {
+    const before = group.nodes.length;
+    group.nodes = group.nodes.filter((n) => n !== skippedNode && n && !n.removed);
+    if (group.nodes.length !== before) {
+      if (group.nodes.length === 0) emptied.push(groupKey);
+      else remaining.push({ key: groupKey, total: group.nodes.length });
+    }
+  }
+  for (const emptyKey of emptied) lastScanGroups.delete(emptyKey);
+
+  const group = lastScanGroups.get(key);
+  const nodes = liveNodes(group);
+  if (nodes.length === 0) {
+    lastLocated = null;
+    figma.ui.postMessage({
+      type: "locate-result",
+      key,
+      index: 0,
+      total: 0,
+      skipped: true,
+      emptiedKeys: emptied,
+      remainingCounts: remaining,
+    });
+    return;
+  }
+  const index = Math.min(lastLocated.index, nodes.length - 1);
+  const node = nodes[index];
+  lastLocated = { key, index, node };
+  await revealNode(node);
+  figma.notify("Skipped · now " + (index + 1) + " / " + nodes.length + " · " + (node.name || node.type), { timeout: 2000 });
+  figma.ui.postMessage(
+    locatePayload(node, key, index, nodes.length, {
+      skipped: true,
+      emptiedKeys: emptied,
+      remainingCounts: remaining,
+    })
+  );
+}
+
+function collectNodeAndAncestors(node) {
+  const list = [];
+  let current = node;
+  while (current && current.type !== "PAGE" && current.type !== "DOCUMENT") {
+    list.push(current);
+    current = current.parent;
+  }
+  return list;
+}
+
+async function inspectSelection() {
+  const selection = figma.currentPage.selection;
+  if (selection.length === 0) {
+    figma.ui.postMessage({
+      type: "locate-result",
+      error: "Select a node on the canvas first, then click the crosshair.",
+    });
+    return;
+  }
+  if (lastScanGroups.size === 0) {
+    figma.ui.postMessage({
+      type: "locate-result",
+      error: "Scan first, then inspect a node.",
+    });
+    return;
+  }
+  const candidates = collectNodeAndAncestors(selection[0]);
+  const candidateIds = new Set(candidates.map((n) => n.id));
+  const hits = [];
+  for (const [key, group] of lastScanGroups) {
+    const nodes = liveNodes(group);
+    const index = nodes.findIndex((n) => candidateIds.has(n.id));
+    if (index >= 0) {
+      hits.push({ key, index, node: nodes[index], total: nodes.length });
+    }
+  }
+  if (hits.length === 0) {
+    figma.ui.postMessage({
+      type: "locate-result",
+      error: "That selection isn't in the current scan results.",
+    });
+    return;
+  }
+  hits.sort((a, b) => {
+    const ai = candidates.findIndex((n) => n.id === a.node.id);
+    const bi = candidates.findIndex((n) => n.id === b.node.id);
+    return ai - bi;
+  });
+  const primary = hits[0];
+  lastLocated = { key: primary.key, index: primary.index, node: primary.node };
+  await revealNode(primary.node);
+  figma.notify((primary.index + 1) + " / " + primary.total + " · " + (primary.node.name || primary.node.type), { timeout: 2000 });
+  figma.ui.postMessage(
+    locatePayload(primary.node, primary.key, primary.index, primary.total, {
+      hits: hits.map((h) => ({ key: h.key, index: h.index })),
+    })
+  );
+}
+
 // ---- Applying ---------------------------------------------------------
 
 let lastScanGroups = new Map(); // key ("field|value") -> { field, value, nodes: Node[] }
+let lastLocated = null; // { key, index, node } — last node shown via the crosshair
 let cancelRequested = false;
 
 function yieldToUI() {
@@ -309,7 +497,7 @@ async function apply(selections) {
 
 // ---- Bootstrap ----------------------------------------------------------
 
-figma.showUI(__html__, { width: 720, height: 680, themeColors: true });
+figma.showUI(__html__, { width: 760, height: 720, themeColors: true });
 
 async function sendLibraries() {
   try {
@@ -339,6 +527,24 @@ figma.ui.onmessage = async (msg) => {
     cancelRequested = true;
   } else if (msg.type === "refresh-libraries") {
     await sendLibraries();
+  } else if (msg.type === "locate") {
+    try {
+      await locate(msg);
+    } catch (e) {
+      figma.ui.postMessage({ type: "error", message: String(e && e.message ? e.message : e) });
+    }
+  } else if (msg.type === "skip-located") {
+    try {
+      await skipLocated();
+    } catch (e) {
+      figma.ui.postMessage({ type: "error", message: String(e && e.message ? e.message : e) });
+    }
+  } else if (msg.type === "inspect-selection") {
+    try {
+      await inspectSelection();
+    } catch (e) {
+      figma.ui.postMessage({ type: "error", message: String(e && e.message ? e.message : e) });
+    }
   } else if (msg.type === "close") {
     figma.closePlugin();
   }
