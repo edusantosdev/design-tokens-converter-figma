@@ -321,7 +321,11 @@ async function skipLocated() {
     group.nodes = group.nodes.filter((n) => n !== skippedNode && n && !n.removed);
     if (group.nodes.length !== before) {
       if (group.nodes.length === 0) emptied.push(groupKey);
-      else remaining.push({ key: groupKey, total: group.nodes.length });
+      else {
+        const entry = { key: groupKey, total: group.nodes.length };
+        if (group.fieldsByNode) entry.cornerCount = cornerCountFor(group);
+        remaining.push(entry);
+      }
     }
   }
   for (const emptyKey of emptied) lastScanGroups.delete(emptyKey);
@@ -412,6 +416,302 @@ async function inspectSelection() {
       hits: hits.map((h) => ({ key: h.key, index: h.index })),
     })
   );
+}
+
+// ---- Radius remap -------------------------------------------------------
+//
+// One-shot migration for the border-radius scale change:
+//   4px → 6px, 8px → 12px
+// Each corner is decided on its own, so a mixed node (8, 8, 0, 0) becomes
+// (12, 12, 0, 0). Only main components and their variants are edited.
+// Instances are skipped so the pass does not write overrides. Corners already
+// bound to a variable are skipped so the binding stays intact. Buttons are
+// included; ones that were 8px become 12px and are reported so they can be
+// set to 6px by hand afterward.
+
+const CORNER_FIELDS = [
+  "topLeftRadius",
+  "topRightRadius",
+  "bottomLeftRadius",
+  "bottomRightRadius",
+];
+
+const RADIUS_MAP = [
+  { from: 4, to: 6 },
+  { from: 8, to: 12 },
+];
+
+// Figma occasionally stores 4.0000002. This catches that without treating
+// 4.5, 0, or a pill radius as a match.
+const RADIUS_EPSILON = 0.001;
+
+function mappedRadius(value) {
+  if (typeof value !== "number" || !isFinite(value)) return null;
+  for (const entry of RADIUS_MAP) {
+    if (Math.abs(value - entry.from) < RADIUS_EPSILON) return entry;
+  }
+  return null;
+}
+
+function hasCornerFields(node) {
+  return !!node && "topLeftRadius" in node && "bottomRightRadius" in node;
+}
+
+function isInsideInstance(node) {
+  let current = node;
+  while (current && current.type !== "PAGE" && current.type !== "DOCUMENT") {
+    if (current.type === "INSTANCE") return true;
+    current = current.parent;
+  }
+  return false;
+}
+
+function isInsideComponentSource(node) {
+  let current = node;
+  while (current && current.type !== "PAGE" && current.type !== "DOCUMENT") {
+    if (current.type === "INSTANCE") return false;
+    if (current.type === "COMPONENT") return true;
+    current = current.parent;
+  }
+  return false;
+}
+
+function owningComponent(node) {
+  let current = node;
+  while (current && current.type !== "PAGE" && current.type !== "DOCUMENT") {
+    if (current.type === "INSTANCE") return null;
+    if (current.type === "COMPONENT") return current;
+    current = current.parent;
+  }
+  return null;
+}
+
+function isCornerBound(node, field) {
+  const bound = node.boundVariables;
+  return !!(bound && bound[field]);
+}
+
+function radiusGroupKey(entry) {
+  return "radius|" + entry.from + "|" + entry.to;
+}
+
+function cornerCountFor(group) {
+  if (!group || !group.fieldsByNode) return 0;
+  let count = 0;
+  for (const node of group.nodes) {
+    const fields = group.fieldsByNode.get(node);
+    if (fields) count += fields.length;
+  }
+  return count;
+}
+
+async function collectComponentSourceNodes(roots) {
+  const stack = [];
+  for (let i = roots.length - 1; i >= 0; i--) {
+    const root = roots[i];
+    if (!root || root.type === "INSTANCE" || isInsideInstance(root)) continue;
+    stack.push({ node: root, inside: isInsideComponentSource(root) });
+  }
+
+  const found = [];
+  let sliceStart = Date.now();
+  while (stack.length) {
+    if (cancelRequested) return null;
+    const item = stack.pop();
+    const node = item.node;
+    if (!node || node.removed || node.type === "INSTANCE") continue;
+
+    const inside = item.inside || node.type === "COMPONENT";
+    if (inside && hasCornerFields(node)) found.push(node);
+
+    if ("children" in node) {
+      const children = node.children;
+      for (let i = children.length - 1; i >= 0; i--) {
+        stack.push({ node: children[i], inside });
+      }
+    }
+
+    if (Date.now() - sliceStart > 16) {
+      await yieldToUI();
+      sliceStart = Date.now();
+    }
+  }
+  return found;
+}
+
+async function scanRadius(msg) {
+  cancelRequested = false;
+  lastLocated = null;
+
+  let roots;
+  if (msg.scope === "selection" && figma.currentPage.selection.length > 0) {
+    roots = figma.currentPage.selection;
+  } else {
+    roots = [figma.currentPage];
+  }
+
+  const nodes = await collectComponentSourceNodes(roots);
+  if (nodes == null) {
+    figma.ui.postMessage({ type: "scan-cancelled" });
+    return;
+  }
+
+  const groups = new Map();
+  let cornerCount = 0;
+  let buttonCorners = 0;
+  let skippedBound = 0;
+  let sliceStart = Date.now();
+
+  for (const node of nodes) {
+    if (cancelRequested) {
+      figma.ui.postMessage({ type: "scan-cancelled" });
+      return;
+    }
+
+    const component = owningComponent(node);
+    const inButton = !!(component && /button/i.test(component.name));
+
+    for (const field of CORNER_FIELDS) {
+      const value = node[field];
+      const mapped = mappedRadius(value);
+      if (!mapped) continue;
+      if (isCornerBound(node, field)) {
+        skippedBound++;
+        continue;
+      }
+
+      const key = radiusGroupKey(mapped);
+      let group = groups.get(key);
+      if (!group) {
+        group = {
+          field: "radius",
+          from: mapped.from,
+          to: mapped.to,
+          nodes: [],
+          fieldsByNode: new Map(),
+        };
+        groups.set(key, group);
+      }
+      let fields = group.fieldsByNode.get(node);
+      if (!fields) {
+        fields = [];
+        group.fieldsByNode.set(node, fields);
+        group.nodes.push(node);
+      }
+      fields.push(field);
+      cornerCount++;
+      if (inButton) buttonCorners++;
+    }
+
+    if (Date.now() - sliceStart > 16) {
+      await yieldToUI();
+      sliceStart = Date.now();
+    }
+  }
+
+  lastScanGroups = groups;
+
+  const summary = [];
+  for (const [key, group] of groups) {
+    summary.push({
+      key,
+      kind: "radius",
+      from: group.from,
+      to: group.to,
+      count: group.nodes.length,
+      cornerCount: cornerCountFor(group),
+    });
+  }
+  summary.sort((a, b) => a.from - b.from);
+
+  figma.ui.postMessage({
+    type: "radius-scan-result",
+    groups: summary,
+    scannedNodeCount: nodes.length,
+    cornerCount,
+    buttonCorners,
+    skippedBound,
+  });
+}
+
+async function applyRadius(keys) {
+  cancelRequested = false;
+  const selected = new Set(keys || []);
+  let updatedCorners = 0;
+  let failedCorners = 0;
+  let skippedBound = 0;
+  let missingGroups = 0;
+  let cancelled = false;
+
+  let processed = 0;
+  let total = 0;
+  for (const key of selected) {
+    const group = lastScanGroups.get(key);
+    if (group && group.fieldsByNode) total += cornerCountFor(group);
+  }
+
+  let sliceStart = Date.now();
+
+  outer: for (const key of selected) {
+    const group = lastScanGroups.get(key);
+    if (!group || !group.fieldsByNode) {
+      missingGroups++;
+      continue;
+    }
+
+    for (const node of group.nodes) {
+      if (cancelRequested) {
+        cancelled = true;
+        break outer;
+      }
+      if (!node || node.removed) {
+        failedCorners += (group.fieldsByNode.get(node) || []).length;
+        processed += (group.fieldsByNode.get(node) || []).length;
+        continue;
+      }
+      const fields = group.fieldsByNode.get(node) || [];
+      for (const field of fields) {
+        if (cancelRequested) {
+          cancelled = true;
+          break outer;
+        }
+        try {
+          if (isCornerBound(node, field)) {
+            skippedBound++;
+          } else {
+            const mapped = mappedRadius(node[field]);
+            if (mapped && mapped.to === group.to) {
+              node[field] = mapped.to;
+              updatedCorners++;
+            }
+          }
+        } catch (e) {
+          failedCorners++;
+        }
+        processed++;
+        if (Date.now() - sliceStart > 16) {
+          figma.ui.postMessage({
+            type: "apply-progress",
+            done: processed,
+            total,
+            unit: "corners",
+          });
+          await yieldToUI();
+          sliceStart = Date.now();
+        }
+      }
+    }
+  }
+
+  figma.ui.postMessage({
+    type: "apply-result",
+    kind: "radius",
+    successNodes: updatedCorners,
+    failedNodes: failedCorners,
+    skippedBound,
+    missingGroups,
+    cancelled,
+  });
 }
 
 // ---- Applying ---------------------------------------------------------
@@ -521,6 +821,17 @@ figma.ui.onmessage = async (msg) => {
     } catch (e) {
       figma.ui.postMessage({ type: "error", message: String(e && e.message ? e.message : e) });
     }
+  } else if (msg.type === "scan-radius") {
+    try {
+      await scanRadius(msg);
+    } catch (e) {
+      figma.ui.postMessage({ type: "error", message: String(e && e.message ? e.message : e) });
+    }
+  } else if (msg.type === "apply-radius") {
+    await applyRadius(msg.keys);
+  } else if (msg.type === "clear-scan") {
+    lastScanGroups = new Map();
+    lastLocated = null;
   } else if (msg.type === "apply") {
     await apply(msg.selections);
   } else if (msg.type === "cancel" || msg.type === "cancel-apply") {

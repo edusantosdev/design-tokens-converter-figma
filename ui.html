@@ -170,6 +170,30 @@
   td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   td.value, td.count { white-space: nowrap; }
 
+  .mode-switch {
+    display: flex;
+    gap: 4px;
+    margin: 0 0 12px;
+    padding: 2px;
+    border-radius: 6px;
+    background: var(--figma-color-bg-secondary);
+  }
+  .mode-switch button {
+    flex: 1;
+    background: transparent;
+    color: var(--figma-color-text-secondary);
+    border-radius: 4px;
+    padding: 5px 8px;
+    font-size: 11px;
+    font-weight: 500;
+  }
+  .mode-switch button:hover { background: var(--figma-color-bg-hover); }
+  .mode-switch button.active {
+    background: var(--figma-color-bg);
+    color: var(--figma-color-text);
+  }
+  .mode-switch button.active:hover { background: var(--figma-color-bg); }
+
   .actions { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; flex-wrap: wrap; }
 
   .round-toggle {
@@ -270,15 +294,20 @@
 </head>
 <body>
   <h2>Design Tokens Converter</h2>
+  <div class="mode-switch" role="tablist">
+    <button type="button" id="modeSpacing" class="active" role="tab" aria-selected="true">Spacing</button>
+    <button type="button" id="modeRadius" role="tab" aria-selected="false">Radius</button>
+  </div>
   <div class="callout" role="note">
     <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
       <circle cx="8" cy="8" r="6.25" stroke="currentColor" stroke-width="1.5"/>
       <path d="M8 7.25v4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
       <circle cx="8" cy="5.15" r="0.85" fill="currentColor"/>
     </svg>
-    <span>Supports spacing tokens only (padding and gap).</span>
+    <span id="calloutText">Supports spacing tokens only (padding and gap).</span>
   </div>
 
+  <div id="spacingSetup">
   <section>
     <div class="row" style="justify-content: space-between; margin-bottom: 4px;">
       <div class="row" style="gap: 6px;">
@@ -298,9 +327,10 @@
       <option value="">None selected</option>
     </select>
   </section>
+  </div>
 
   <section>
-    <h3>3. Scope</h3>
+    <h3 id="scopeHeading">3. Scope</h3>
     <select id="scope">
       <option value="selection">Current selection</option>
       <option value="page">Whole page</option>
@@ -342,7 +372,7 @@
       <div class="inspector-actions">
         <button class="secondary" id="inspectorPrev" type="button">Prev</button>
         <button class="secondary" id="inspectorNext" type="button">Next</button>
-        <button class="secondary" id="inspectorSkip" type="button" title="Remove this node from the group so Apply will not bind it">Skip this node</button>
+        <button class="secondary" id="inspectorSkip" type="button" title="Remove this node from the group so Apply will not change it">Skip this node</button>
       </div>
     </div>
   </div>
@@ -350,6 +380,15 @@
   <div id="results"></div>
 
 <script>
+  const SPACING_CALLOUT = 'Supports spacing tokens only (padding and gap).';
+  const RADIUS_CALLOUT = 'Remaps raw corner radius on main components and variants: 4px → 6px and 8px → 12px. Each corner is updated on its own, so a 0 stays 0. Instances and corners bound to a variable are skipped. Buttons that were 8px become 12px — set those to 6px by hand afterward.';
+
+  const modeSpacingBtn = document.getElementById('modeSpacing');
+  const modeRadiusBtn = document.getElementById('modeRadius');
+  const calloutText = document.getElementById('calloutText');
+  const spacingSetup = document.getElementById('spacingSetup');
+  const scopeHeading = document.getElementById('scopeHeading');
+
   const scanBtn = document.getElementById('scanBtn');
   const applyBtn = document.getElementById('applyBtn');
   const cancelBtn = document.getElementById('cancelBtn');
@@ -373,7 +412,9 @@
   const progressTrack = document.getElementById('progressTrack');
   const progressFill = document.getElementById('progressFill');
 
+  let mode = 'spacing'; // 'spacing' | 'radius'
   let libraries = [];
+  let radiusSkippedBound = 0;
   let serverGroups = []; // raw groups from the last scan (matches = exact matches only)
   let currentGroups = []; // each: { key, field, value, count, matches, included, selectedVariableId, rounded, roundedValue }
   let allTokens = [];
@@ -408,15 +449,21 @@
     if (primaryRow) primaryRow.scrollIntoView({ block: 'nearest' });
   }
 
-  function updateGroupCount(key, total) {
+  function updateGroupCount(key, total, cornerCount) {
     const g = currentGroups.find((x) => x.key === key);
     const sg = serverGroups.find((x) => x.key === key);
     if (g) g.count = total;
     if (sg) sg.count = total;
+    if (typeof cornerCount === 'number') {
+      if (g) g.cornerCount = cornerCount;
+      if (sg) sg.cornerCount = cornerCount;
+    }
     resultsEl.querySelectorAll('tr[data-key]').forEach((row) => {
       if (row.dataset.key !== key) return;
       const count = row.querySelector('td.count');
       if (count) count.textContent = total.toLocaleString();
+      const corners = row.querySelector('td.corners');
+      if (corners && typeof cornerCount === 'number') corners.textContent = cornerCount.toLocaleString();
     });
   }
 
@@ -429,7 +476,7 @@
     if (emptied.size) {
       serverGroups = serverGroups.filter((g) => !emptied.has(g.key));
     }
-    (msg.remainingCounts || []).forEach((entry) => updateGroupCount(entry.key, entry.total));
+    (msg.remainingCounts || []).forEach((entry) => updateGroupCount(entry.key, entry.total, entry.cornerCount));
 
     if (msg.total === 0) {
       hideInspector();
@@ -588,6 +635,39 @@
     }
   }
 
+  function clearResults() {
+    serverGroups = [];
+    currentGroups = [];
+    radiusSkippedBound = 0;
+    hideInspector();
+    resultsEl.innerHTML = '';
+    selectAllBtn.style.display = 'none';
+    selectNoneBtn.style.display = 'none';
+    inspectBtn.style.display = 'none';
+    roundToggleLabel.style.display = 'none';
+    updateApplyEnabled();
+  }
+
+  function setMode(next) {
+    if (scanning || next === mode) return;
+    mode = next;
+    const radius = mode === 'radius';
+    modeSpacingBtn.classList.toggle('active', !radius);
+    modeRadiusBtn.classList.toggle('active', radius);
+    modeSpacingBtn.setAttribute('aria-selected', radius ? 'false' : 'true');
+    modeRadiusBtn.setAttribute('aria-selected', radius ? 'true' : 'false');
+    spacingSetup.style.display = radius ? 'none' : '';
+    scopeHeading.textContent = radius ? 'Scope' : '3. Scope';
+    calloutText.textContent = radius ? RADIUS_CALLOUT : SPACING_CALLOUT;
+    applyBtn.textContent = radius ? 'Apply selected radius' : 'Apply selected matches';
+    clearResults();
+    setStatus('');
+    parent.postMessage({ pluginMessage: { type: 'clear-scan' } }, '*');
+  }
+
+  modeSpacingBtn.onclick = () => setMode('spacing');
+  modeRadiusBtn.onclick = () => setMode('radius');
+
   librarySelect.onchange = () => renderCollectionSelect();
 
   refreshBtn.onclick = () => {
@@ -602,6 +682,22 @@
       scanBtn.disabled = true;
       setStatus('Cancelling…');
       parent.postMessage({ pluginMessage: { type: 'cancel' } }, '*');
+      return;
+    }
+    const scope = document.getElementById('scope').value;
+    if (mode === 'radius') {
+      setStatus('Scanning corner radius…');
+      scanning = true;
+      scanBtn.textContent = 'Stop scanning';
+      scanBtn.disabled = false;
+      applyBtn.disabled = true;
+      selectAllBtn.style.display = 'none';
+      selectNoneBtn.style.display = 'none';
+      inspectBtn.style.display = 'none';
+      roundToggleLabel.style.display = 'none';
+      hideInspector();
+      resultsEl.innerHTML = '';
+      parent.postMessage({ pluginMessage: { type: 'scan-radius', scope } }, '*');
       return;
     }
     const collectionKey = collectionSelect.value;
@@ -624,13 +720,24 @@
     parent.postMessage({
       pluginMessage: {
         type: 'scan',
-        scope: document.getElementById('scope').value,
+        scope,
         collectionKeys,
       }
     }, '*');
   };
 
   applyBtn.onclick = () => {
+    if (mode === 'radius') {
+      const keys = currentGroups.filter((g) => g.included).map((g) => g.key);
+      if (keys.length === 0) return;
+      setProgress(true, 0);
+      applyBtn.disabled = true;
+      scanBtn.disabled = true;
+      cancelBtn.style.display = '';
+      startApplyTimer();
+      parent.postMessage({ pluginMessage: { type: 'apply-radius', keys } }, '*');
+      return;
+    }
     const selections = currentGroups
       .filter((g) => g.included && g.selectedVariableId)
       .map((g) => ({ key: g.key, variableId: g.selectedVariableId }));
@@ -650,7 +757,9 @@
   };
 
   selectAllBtn.onclick = () => {
-    currentGroups.forEach((g) => { if (g.matches.length > 0) g.included = true; });
+    currentGroups.forEach((g) => {
+      if (mode === 'radius' || g.matches.length > 0) g.included = true;
+    });
     syncRowCheckboxes();
   };
   selectNoneBtn.onclick = () => {
@@ -696,6 +805,10 @@
   }
 
   function updateApplyEnabled() {
+    if (mode === 'radius') {
+      applyBtn.disabled = !currentGroups.some((g) => g.included);
+      return;
+    }
     applyBtn.disabled = !currentGroups.some((g) => g.included && g.selectedVariableId);
   }
 
@@ -744,7 +857,61 @@
     return { matches: [], rounded: false, roundedValue: null };
   }
 
+  function renderRadiusGroups() {
+    const prev = new Map(currentGroups.map((g) => [g.key, { included: g.included, locateIndex: g.locateIndex }]));
+    currentGroups = serverGroups.map((g) => {
+      const p = prev.get(g.key);
+      return {
+        ...g,
+        included: p ? p.included : true,
+        locateIndex: p && typeof p.locateIndex === 'number' ? p.locateIndex : -1,
+        matches: [],
+        selectedVariableId: null,
+      };
+    });
+    roundToggleLabel.style.display = 'none';
+
+    if (currentGroups.length === 0) {
+      const boundNote = radiusSkippedBound
+        ? ' ' + radiusSkippedBound.toLocaleString() + ' matching corner(s) were left alone because they are bound to a variable.'
+        : '';
+      resultsEl.innerHTML = '<div class="empty-note">No raw 4px or 8px corners on main components in this scope.' + boundNote + '</div>';
+      selectAllBtn.style.display = 'none';
+      selectNoneBtn.style.display = 'none';
+      inspectBtn.style.display = 'none';
+      hideInspector();
+      updateApplyEnabled();
+      return;
+    }
+
+    selectAllBtn.style.display = '';
+    selectNoneBtn.style.display = '';
+    inspectBtn.style.display = '';
+
+    const locatedKey = inspected ? inspected.key : '';
+    let html = '<table><colgroup><col style="width:28px"><col style="width:140px"><col style="width:72px"><col style="width:72px"><col style="width:28px"><col></colgroup>' +
+      '<thead><tr><th></th><th>Change</th><th>Corners</th><th>Nodes</th><th></th><th></th></tr></thead><tbody>';
+    for (const g of currentGroups) {
+      const isLocated = locatedKey && g.key === locatedKey;
+      html += `<tr data-key="${escapeAttr(g.key)}" class="${isLocated ? 'located' : ''}">
+        <td><input type="checkbox" ${g.included ? 'checked' : ''} /></td>
+        <td class="value">${formatPx(g.from)}<span class="round-arrow">→</span>${formatPx(g.to)}</td>
+        <td class="corners">${(g.cornerCount || 0).toLocaleString()}</td>
+        <td class="count">${g.count.toLocaleString()}</td>
+        <td class="locate"><button class="icon locate${isLocated ? ' active' : ''}" type="button" title="Show a node from this group on the canvas. Click again to cycle." aria-label="Show on canvas">${CROSSHAIR_SVG}</button></td>
+        <td></td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+    resultsEl.innerHTML = html;
+    updateApplyEnabled();
+  }
+
   function renderGroups() {
+    if (mode === 'radius') {
+      renderRadiusGroups();
+      return;
+    }
     // Preserve the user's per-group choices across re-renders (e.g. toggling
     // rounding) when the previously picked token is still a valid option.
     const prev = new Map(currentGroups.map((g) => [g.key, { included: g.included, selectedVariableId: g.selectedVariableId, locateIndex: g.locateIndex }]));
@@ -884,6 +1051,21 @@
       } else {
         setStatus('');
       }
+    } else if (msg.type === 'radius-scan-result') {
+      setScanIdle();
+      radiusSkippedBound = msg.skippedBound || 0;
+      const parts = [
+        msg.cornerCount.toLocaleString() + ' corner(s) to update',
+        'across ' + msg.groups.length + ' group(s)',
+        'scanned ' + msg.scannedNodeCount.toLocaleString() + ' component node(s)',
+      ];
+      if (msg.skippedBound) parts.push(msg.skippedBound.toLocaleString() + ' bound corner(s) skipped');
+      if (msg.buttonCorners) parts.push(msg.buttonCorners.toLocaleString() + ' of these corners sit inside a Button component — set those to 6px by hand afterward');
+      setStatus(parts.join(' · ') + '.');
+      serverGroups = msg.groups || [];
+      currentGroups = [];
+      hideInspector();
+      renderGroups();
     } else if (msg.type === 'scan-result') {
       setScanIdle();
       allTokens = (msg.tokens || []).slice().sort((a, b) => a.value - b.value || a.name.localeCompare(b.name));
@@ -901,7 +1083,8 @@
     } else if (msg.type === 'apply-progress') {
       const pct = msg.total ? Math.round((msg.done / msg.total) * 100) : 0;
       setProgress(true, pct);
-      applyBaseStatus = `Applying… ${msg.done.toLocaleString()} / ${msg.total.toLocaleString()} nodes`;
+      const unit = msg.unit || 'nodes';
+      applyBaseStatus = `Applying… ${msg.done.toLocaleString()} / ${msg.total.toLocaleString()} ${unit}`;
       renderApplyStatus();
     } else if (msg.type === 'apply-result') {
       setProgress(false, 0);
@@ -909,8 +1092,12 @@
       setScanIdle();
       cancelBtn.style.display = 'none';
       cancelBtn.disabled = false;
-      const parts = [`Bound ${msg.successNodes.toLocaleString()} node(s)`];
+      const radiusApply = msg.kind === 'radius';
+      const parts = [radiusApply
+        ? `Updated ${msg.successNodes.toLocaleString()} corner(s)`
+        : `Bound ${msg.successNodes.toLocaleString()} node(s)`];
       if (msg.failedNodes) parts.push(`${msg.failedNodes} failed`);
+      if (msg.skippedBound) parts.push(`${msg.skippedBound} bound corner(s) skipped`);
       if (msg.missingGroups) parts.push(`${msg.missingGroups} group(s) out of date — rescan and try again`);
       if (msg.cancelled) parts.push('cancelled — partial changes were kept, rescan to see what remains');
       parts.push(`in ${formatElapsed(elapsedMs)}`);
