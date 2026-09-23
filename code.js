@@ -467,7 +467,8 @@ async function inspectSelection() {
 // Remaps corner radius on main components and variants using the mapping
 // the UI sends (default 4→6 and 8→12). Each corner is decided on its own,
 // so a mixed node keeps the corners that are not in the mapping.
-// Instances are skipped so the pass does not write overrides.
+// Instances are skipped unless "Overwrite instance values" is checked.
+// Checking it writes overrides on those instances, including nested frames.
 // Raw corners get the new number. Corners already bound to a variable stay
 // bound: they are rebound to a corner-radius token whose resolved value is
 // the mapping target, when one is available.
@@ -583,19 +584,21 @@ function cornerCountFor(group) {
   return count;
 }
 
-async function collectRadiusNodes(roots, onlyComponents) {
+async function collectRadiusNodes(roots, onlyComponents, includeInstances) {
   const stack = [];
   let skippedInstances = 0;
   for (let i = roots.length - 1; i >= 0; i--) {
     const root = roots[i];
     if (!root) continue;
-    if (root.type === "INSTANCE" || isInsideInstance(root)) {
+    const rootIsInstance = root.type === "INSTANCE" || isInsideInstance(root);
+    if (rootIsInstance && !includeInstances) {
       skippedInstances++;
       continue;
     }
     stack.push({
       node: root,
-      inside: onlyComponents ? isInsideComponentSource(root) : true,
+      insideComponent: onlyComponents ? isInsideComponentSource(root) : true,
+      insideInstance: rootIsInstance,
     });
   }
 
@@ -606,18 +609,27 @@ async function collectRadiusNodes(roots, onlyComponents) {
     const item = stack.pop();
     const node = item.node;
     if (!node || node.removed) continue;
-    if (node.type === "INSTANCE") {
+
+    const insideInstance = item.insideInstance || node.type === "INSTANCE";
+    if (node.type === "INSTANCE" && !includeInstances) {
       skippedInstances++;
       continue;
     }
 
-    const inside = onlyComponents ? item.inside || node.type === "COMPONENT" : true;
-    if (inside && hasCornerFields(node)) found.push(node);
+    const insideComponent = onlyComponents
+      ? item.insideComponent || node.type === "COMPONENT"
+      : true;
+    const inScope = insideComponent || (includeInstances && insideInstance);
+    if (inScope && hasCornerFields(node)) found.push(node);
 
     if ("children" in node) {
       const children = node.children;
       for (let i = children.length - 1; i >= 0; i--) {
-        stack.push({ node: children[i], inside });
+        stack.push({
+          node: children[i],
+          insideComponent,
+          insideInstance,
+        });
       }
     }
 
@@ -657,8 +669,8 @@ async function scanRadius(msg) {
   }
 
   // Selection updates the layers you picked, including plain frames.
-  // Whole page stays on main components so instances on the canvas are not overridden.
-  const collected = await collectRadiusNodes(roots, !selectionScope);
+  // Whole page stays on main components, plus instances when overwrite is on.
+  const collected = await collectRadiusNodes(roots, !selectionScope, !!msg.includeInstances);
   if (collected == null) {
     figma.ui.postMessage({ type: "scan-cancelled" });
     return;
@@ -939,7 +951,16 @@ async function apply(selections) {
 
 // ---- Bootstrap ----------------------------------------------------------
 
-figma.showUI(__html__, { width: 760, height: 720, themeColors: true });
+const UI_EXPANDED = { width: 760, height: 720 };
+const UI_COMPACT = { width: 440, height: 520 };
+
+figma.showUI(__html__, { width: UI_EXPANDED.width, height: UI_EXPANDED.height, themeColors: true });
+
+figma.clientStorage.getAsync("ui-compact").then((saved) => {
+  if (!saved) return;
+  figma.ui.resize(UI_COMPACT.width, UI_COMPACT.height);
+  figma.ui.postMessage({ type: "compact", compact: true });
+}).catch(() => {});
 
 async function sendLibraries() {
   try {
@@ -998,6 +1019,10 @@ figma.ui.onmessage = async (msg) => {
     } catch (e) {
       figma.ui.postMessage({ type: "error", message: String(e && e.message ? e.message : e) });
     }
+  } else if (msg.type === "resize") {
+    const size = msg.compact ? UI_COMPACT : UI_EXPANDED;
+    figma.ui.resize(size.width, size.height);
+    figma.clientStorage.setAsync("ui-compact", !!msg.compact).catch(() => {});
   } else if (msg.type === "close") {
     figma.closePlugin();
   }

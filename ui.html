@@ -4,15 +4,32 @@
 <meta charset="utf-8" />
 <style>
   * { box-sizing: border-box; }
+  html, body { height: 100%; }
   body {
+    display: flex;
+    flex-direction: column;
     font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif;
     font-size: 12px;
     margin: 0;
     padding: 12px;
+    overflow: hidden;
     background: var(--figma-color-bg);
     color: var(--figma-color-text);
   }
-  h2 { font-size: 13px; margin: 0 0 10px; font-weight: 600; }
+  .title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  h2 { font-size: 13px; margin: 0; font-weight: 600; }
+  body.compact { padding: 8px; }
+  body.compact .title-row { margin-bottom: 6px; }
+  body.compact .callout,
+  body.compact .map-note { display: none; }
+  body.compact section { margin-bottom: 8px; }
+  body.compact .mode-switch { margin-bottom: 8px; }
   h3 { font-size: 11px; margin: 0 0 6px; font-weight: 400; color: var(--figma-color-text-secondary); }
 
   section { margin-bottom: 12px; }
@@ -162,7 +179,8 @@
   }
 
   #results {
-    max-height: 380px;
+    flex: 1 1 auto;
+    min-height: 72px;
     overflow: auto;
     border: 1px solid var(--figma-color-border);
     border-radius: 4px;
@@ -315,7 +333,10 @@
 </style>
 </head>
 <body>
-  <h2>Design Tokens Converter</h2>
+  <div class="title-row">
+    <h2>Design Tokens Converter</h2>
+    <button class="link" id="compactBtn" type="button" aria-pressed="false">Compact</button>
+  </div>
   <div class="mode-switch" role="tablist">
     <button type="button" id="modeSpacing" class="active" role="tab" aria-selected="true">Spacing</button>
     <button type="button" id="modeRadius" role="tab" aria-selected="false">Radius</button>
@@ -358,7 +379,12 @@
         <button class="link" id="addMappingBtn" type="button">Add</button>
       </div>
       <div id="mappingRows"></div>
-      <p class="map-note">Only these values change. Each corner is checked on its own, so 0 and anything not listed stay as they are. Raw corners get the new number. Corners already bound to a variable are rebound to a radius token at the new value. With Current selection, a plain frame is included. Instances are skipped.</p>
+      <p class="map-note">Only these values change. Each corner is checked on its own, so 0 and anything not listed stay as they are. Raw corners get the new number. Corners already bound to a variable are rebound to a radius token at the new value.</p>
+      <label class="round-toggle" style="margin-top: 8px;">
+        <input type="checkbox" id="instanceOverride" />
+        <span>Overwrite instance values</span>
+        <span class="info-tip" tabindex="0" aria-label="Updates frames inside instances too. That writes an override on the instance, so a later edit to the main component will not replace it.">i<span class="info-tip-text">Updates frames inside instances too, including nested frames. That writes an override on the instance, so a later edit to the main component will not replace it.</span></span>
+      </label>
     </section>
   </div>
 
@@ -414,10 +440,11 @@
 
 <script>
   const SPACING_CALLOUT = 'Supports spacing tokens only (padding and gap).';
-  const RADIUS_CALLOUT = 'Current selection updates the layers you select, except instances. Whole page updates main components and variants only. Buttons included in a row still need a manual check afterward.';
+  const RADIUS_CALLOUT = 'Current selection updates the layers you select. Whole page updates main components and variants. Turn on Overwrite instance values to also update frames inside instances. Buttons included in a row still need a manual check afterward.';
   const SPACING_LIBRARY_TIP = 'Enable your semantic-token file as a team library first (Assets panel → Libraries), then pick its collection(s) above and scan.';
   const RADIUS_LIBRARY_TIP = 'Optional. Pick the collection that holds corner-radius tokens so corners already bound to a variable can be rebound. Local radius variables in this file are included either way. Raw corners update even if you leave this unset.';
 
+  const compactBtn = document.getElementById('compactBtn');
   const modeSpacingBtn = document.getElementById('modeSpacing');
   const modeRadiusBtn = document.getElementById('modeRadius');
   const calloutText = document.getElementById('calloutText');
@@ -460,6 +487,19 @@
   const progressFill = document.getElementById('progressFill');
 
   let mode = 'spacing'; // 'spacing' | 'radius'
+  let compact = false;
+
+  function applyCompact(next) {
+    compact = !!next;
+    document.body.classList.toggle('compact', compact);
+    compactBtn.textContent = compact ? 'Expand' : 'Compact';
+    compactBtn.setAttribute('aria-pressed', compact ? 'true' : 'false');
+  }
+
+  compactBtn.onclick = () => {
+    applyCompact(!compact);
+    parent.postMessage({ pluginMessage: { type: 'resize', compact } }, '*');
+  };
   let libraries = [];
   let radiusSkippedBound = 0;
   let radiusScanMeta = { selectionScope: false, skippedInstances: 0 };
@@ -851,6 +891,7 @@
           scope,
           mappings: parsed.mappings,
           collectionKeys: collectionKey ? [collectionKey] : [],
+          includeInstances: document.getElementById('instanceOverride').checked,
         },
       }, '*');
       return;
@@ -1046,9 +1087,11 @@
     if (currentGroups.length === 0) {
       const why = radiusScanMeta.selectionScope
         ? (radiusScanMeta.skippedInstances
-          ? 'Nothing in the selection matched. Instances are skipped — select the frame or the main component.'
+          ? 'Nothing in the selection matched. Turn on Overwrite instance values to update frames inside instances.'
           : 'No corners in this selection match the mapping.')
-        : 'No corners on main components match the mapping on this page.';
+        : (radiusScanMeta.skippedInstances
+          ? 'No corners on main components match the mapping. Turn on Overwrite instance values to include instances on this page.'
+          : 'No corners on main components match the mapping on this page.');
       resultsEl.innerHTML = '<div class="empty-note">' + why + '</div>';
       selectAllBtn.style.display = 'none';
       selectNoneBtn.style.display = 'none';
@@ -1229,7 +1272,9 @@
     const msg = event.data.pluginMessage;
     if (!msg) return;
 
-    if (msg.type === 'libraries') {
+    if (msg.type === 'compact') {
+      applyCompact(!!msg.compact);
+    } else if (msg.type === 'libraries') {
       libraries = msg.libraries || [];
       renderLibrarySelect();
       if (mode !== 'radius' && getSpacingLibraries().size === 0) {
