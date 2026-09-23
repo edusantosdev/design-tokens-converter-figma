@@ -187,24 +187,26 @@
   }
   #resizeHandle {
     position: fixed;
-    right: 0;
-    bottom: 0;
-    width: 16px;
-    height: 16px;
+    right: 2px;
+    bottom: 2px;
+    width: 28px;
+    height: 28px;
     cursor: nwse-resize;
-    z-index: 30;
+    z-index: 1000;
     touch-action: none;
   }
   #resizeHandle::after {
     content: "";
     position: absolute;
-    right: 3px;
-    bottom: 3px;
-    width: 7px;
-    height: 7px;
+    right: 5px;
+    bottom: 5px;
+    width: 8px;
+    height: 8px;
     border-right: 2px solid var(--figma-color-icon-secondary, var(--figma-color-border));
     border-bottom: 2px solid var(--figma-color-icon-secondary, var(--figma-color-border));
   }
+  body.resizing,
+  body.resizing * { cursor: nwse-resize !important; user-select: none; }
   td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   td.value, td.count { white-space: nowrap; }
 
@@ -541,6 +543,8 @@
   };
 
   const resizeHandle = document.getElementById('resizeHandle');
+  let resizeDrag = null;
+
   function postWindowSize(width, height, persist) {
     parent.postMessage({
       pluginMessage: {
@@ -551,20 +555,53 @@
       },
     }, '*');
   }
+
+  function resizeDelta(event) {
+    return {
+      width: resizeDrag.startW + (event.clientX - resizeDrag.startX),
+      height: resizeDrag.startH + (event.clientY - resizeDrag.startY),
+    };
+  }
+
+  function onResizeMove(event) {
+    if (!resizeDrag) return;
+    event.preventDefault();
+    const next = resizeDelta(event);
+    postWindowSize(next.width, next.height, false);
+  }
+
+  function onResizeEnd(event) {
+    if (!resizeDrag) return;
+    const next = event ? resizeDelta(event) : { width: resizeDrag.startW, height: resizeDrag.startH };
+    resizeDrag = null;
+    document.body.classList.remove('resizing');
+    resizeHandle.removeEventListener('pointermove', onResizeMove);
+    resizeHandle.removeEventListener('pointerup', onResizeEnd);
+    resizeHandle.removeEventListener('pointercancel', onResizeEnd);
+    window.removeEventListener('pointermove', onResizeMove);
+    window.removeEventListener('pointerup', onResizeEnd);
+    window.removeEventListener('pointercancel', onResizeEnd);
+    postWindowSize(next.width, next.height, true);
+  }
+
   resizeHandle.addEventListener('pointerdown', (event) => {
-    resizeHandle.setPointerCapture(event.pointerId);
-    const onMove = (moveEvent) => {
-      postWindowSize(moveEvent.clientX + 12, moveEvent.clientY + 12, false);
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    resizeDrag = {
+      startX: event.clientX,
+      startY: event.clientY,
+      startW: window.innerWidth,
+      startH: window.innerHeight,
     };
-    const onUp = (upEvent) => {
-      resizeHandle.removeEventListener('pointermove', onMove);
-      resizeHandle.removeEventListener('pointerup', onUp);
-      resizeHandle.removeEventListener('pointercancel', onUp);
-      postWindowSize(upEvent.clientX + 12, upEvent.clientY + 12, true);
-    };
-    resizeHandle.addEventListener('pointermove', onMove);
-    resizeHandle.addEventListener('pointerup', onUp);
-    resizeHandle.addEventListener('pointercancel', onUp);
+    document.body.classList.add('resizing');
+    try { resizeHandle.setPointerCapture(event.pointerId); } catch (e) {}
+    resizeHandle.addEventListener('pointermove', onResizeMove);
+    resizeHandle.addEventListener('pointerup', onResizeEnd);
+    resizeHandle.addEventListener('pointercancel', onResizeEnd);
+    window.addEventListener('pointermove', onResizeMove);
+    window.addEventListener('pointerup', onResizeEnd);
+    window.addEventListener('pointercancel', onResizeEnd);
   });
   let libraries = [];
   let radiusSkippedBound = 0;
