@@ -218,6 +218,16 @@
     align-items: center;
     margin-top: 6px;
   }
+  .map-row input[type="text"] {
+    flex: 1;
+    min-width: 0;
+    padding: 4px 6px;
+    border: 1px solid var(--figma-color-border);
+    border-radius: 4px;
+    background: var(--figma-color-bg);
+    color: var(--figma-color-text);
+    font-size: 11px;
+  }
   .map-row input[type="number"] {
     width: 72px;
     padding: 4px 6px;
@@ -385,6 +395,14 @@
         <span>Overwrite instance values</span>
         <span class="info-tip" tabindex="0" aria-label="Updates frames inside instances too. That writes an override on the instance, so a later edit to the main component will not replace it.">i<span class="info-tip-text">Updates frames inside instances too, including nested frames. That writes an override on the instance, so a later edit to the main component will not replace it.</span></span>
       </label>
+    </section>
+    <section>
+      <div class="row" style="justify-content: space-between; margin-bottom: 4px;">
+        <h3 style="margin:0;">Exclusions</h3>
+        <button class="link" id="addExclusionBtn" type="button">Add</button>
+      </div>
+      <div id="exclusionRows"></div>
+      <p class="map-note">Skip a component when its name contains one of these. Matching is case-insensitive, and it includes variants and instances. Button also skips Icon Button.</p>
     </section>
   </div>
 
@@ -823,6 +841,58 @@
 
   renderMappingRows();
 
+  const exclusionRowsEl = document.getElementById('exclusionRows');
+  const addExclusionBtn = document.getElementById('addExclusionBtn');
+  let radiusExclusions = ['Button'];
+
+  function renderExclusionRows() {
+    exclusionRowsEl.innerHTML = radiusExclusions.map((entry, index) => `
+      <div class="map-row" data-index="${index}">
+        <input class="exclusion-name" type="text" value="${escapeAttr(entry)}" placeholder="Button" aria-label="Excluded component name" />
+        <button class="link exclusion-remove" type="button">Remove</button>
+      </div>
+    `).join('');
+  }
+
+  function readExclusions() {
+    const seen = new Set();
+    const exclusions = [];
+    exclusionRowsEl.querySelectorAll('.exclusion-name').forEach((input) => {
+      const text = input.value.trim();
+      const key = text.toLowerCase();
+      if (!text || seen.has(key)) return;
+      seen.add(key);
+      exclusions.push(text);
+    });
+    return exclusions;
+  }
+
+  exclusionRowsEl.addEventListener('input', (e) => {
+    const row = e.target.closest('.map-row');
+    if (!row || !e.target.classList.contains('exclusion-name')) return;
+    radiusExclusions[Number(row.dataset.index)] = e.target.value;
+  });
+
+  exclusionRowsEl.addEventListener('click', (e) => {
+    const btn = e.target.closest('.exclusion-remove');
+    if (!btn) return;
+    const row = btn.closest('.map-row');
+    if (!row) return;
+    radiusExclusions.splice(Number(row.dataset.index), 1);
+    renderExclusionRows();
+  });
+
+  addExclusionBtn.onclick = () => {
+    radiusExclusions = readExclusions();
+    radiusExclusions.push('');
+    renderExclusionRows();
+    const inputs = exclusionRowsEl.querySelectorAll('.exclusion-name');
+    const last = inputs[inputs.length - 1];
+    if (last) last.focus();
+  };
+
+  renderExclusionRows();
+
   function setMode(next) {
     if (scanning || next === mode) return;
     mode = next;
@@ -892,6 +962,7 @@
           mappings: parsed.mappings,
           collectionKeys: collectionKey ? [collectionKey] : [],
           includeInstances: document.getElementById('instanceOverride').checked,
+          exclusions: readExclusions(),
         },
       }, '*');
       return;
@@ -1297,6 +1368,7 @@
         'scanned ' + msg.scannedNodeCount.toLocaleString() + ' node(s)',
       ];
       if (msg.skippedInstances) parts.push(msg.skippedInstances.toLocaleString() + ' instance(s) skipped');
+      if (msg.excludedCorners) parts.push(msg.excludedCorners.toLocaleString() + ' corner(s) excluded by component name');
       radiusScanMeta = {
         selectionScope: !!msg.selectionScope,
         skippedInstances: msg.skippedInstances || 0,

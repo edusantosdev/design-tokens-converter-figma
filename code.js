@@ -565,6 +565,56 @@ function owningComponent(node) {
   return null;
 }
 
+function normalizeExclusions(list) {
+  const exclusions = [];
+  const seen = new Set();
+  const source = Array.isArray(list) ? list : [];
+  for (const entry of source) {
+    const text = String(entry == null ? "" : entry).trim().toLowerCase();
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    exclusions.push(text);
+  }
+  return exclusions;
+}
+
+function nameMatchesExclusion(name, exclusions) {
+  const text = String(name || "").toLowerCase();
+  return exclusions.some((pattern) => text.indexOf(pattern) !== -1);
+}
+
+async function instanceSourceNames(instance, cache) {
+  if (cache.has(instance.id)) return cache.get(instance.id);
+  const names = [];
+  try {
+    const main = await instance.getMainComponentAsync();
+    if (main) {
+      names.push(main.name || "");
+      if (main.parent && main.parent.type === "COMPONENT_SET") names.push(main.parent.name || "");
+    }
+  } catch (e) {
+    // Main component can live on a page that is not loaded.
+  }
+  cache.set(instance.id, names);
+  return names;
+}
+
+async function excludedByName(node, exclusions, instanceCache) {
+  if (!exclusions.length) return false;
+  let current = node;
+  while (current && current.type !== "PAGE" && current.type !== "DOCUMENT") {
+    if (current.type === "COMPONENT" || current.type === "COMPONENT_SET" || current.type === "INSTANCE") {
+      if (nameMatchesExclusion(current.name, exclusions)) return true;
+    }
+    if (current.type === "INSTANCE") {
+      const names = await instanceSourceNames(current, instanceCache);
+      if (names.some((name) => nameMatchesExclusion(name, exclusions))) return true;
+    }
+    current = current.parent;
+  }
+  return false;
+}
+
 function isCornerBound(node, field) {
   const bound = node.boundVariables;
   return !!(bound && bound[field]);
@@ -651,6 +701,7 @@ async function scanRadius(msg) {
     return;
   }
   const mappings = parsed.mappings;
+  const exclusions = normalizeExclusions(msg.exclusions);
 
   const selectionScope = msg.scope === "selection";
   if (selectionScope && figma.currentPage.selection.length === 0) {
@@ -681,6 +732,8 @@ async function scanRadius(msg) {
   let rawCorners = 0;
   let boundCorners = 0;
   let buttonCorners = 0;
+  let excludedCorners = 0;
+  const instanceNameCache = new Map();
   let sliceStart = Date.now();
 
   for (const node of nodes) {
@@ -691,11 +744,16 @@ async function scanRadius(msg) {
 
     const component = owningComponent(node);
     const inButton = !!(component && /button/i.test(component.name));
+    const excluded = await excludedByName(node, exclusions, instanceNameCache);
 
     for (const field of CORNER_FIELDS) {
       const value = node[field];
       const mapped = mappedRadius(value, mappings);
       if (!mapped) continue;
+      if (excluded) {
+        excludedCorners++;
+        continue;
+      }
       const bound = isCornerBound(node, field);
 
       const key = radiusGroupKey(mapped, bound);
@@ -755,6 +813,7 @@ async function scanRadius(msg) {
     rawCorners,
     boundCorners,
     buttonCorners,
+    excludedCorners,
     tokenCount: tokens.length,
     skippedInstances: collected.skippedInstances,
     selectionScope,
