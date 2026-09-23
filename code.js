@@ -733,7 +733,7 @@ async function scanRadius(msg) {
 
   const summary = [];
   for (const [key, group] of groups) {
-    const matches = group.bound ? tokensAtValue(tokens, group.to) : [];
+    const matches = tokensAtValue(tokens, group.to);
     summary.push({
       key,
       kind: "radius",
@@ -796,8 +796,8 @@ async function applyRadius(selections) {
       continue;
     }
 
-    const variable = group.bound ? await getVariableCached(sel.variableId) : null;
-    if (group.bound && !variable) {
+    const variable = sel.variableId ? await getVariableCached(sel.variableId) : null;
+    if (sel.variableId && !variable) {
       failedCorners += cornerCountFor(group);
       processed += cornerCountFor(group);
       continue;
@@ -824,8 +824,8 @@ async function applyRadius(selections) {
           const stillMatches = valueMatches(node[field], group.from);
           if (!stillMatches) {
             // Value changed since the scan. Leave it alone.
-          } else if (group.bound) {
-            if (!stillBound) {
+          } else if (variable) {
+            if (group.bound !== stillBound) {
               skippedBound++;
             } else {
               node.setBoundVariable(field, variable);
