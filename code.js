@@ -583,12 +583,20 @@ function cornerCountFor(group) {
   return count;
 }
 
-async function collectComponentSourceNodes(roots) {
+async function collectRadiusNodes(roots, onlyComponents) {
   const stack = [];
+  let skippedInstances = 0;
   for (let i = roots.length - 1; i >= 0; i--) {
     const root = roots[i];
-    if (!root || root.type === "INSTANCE" || isInsideInstance(root)) continue;
-    stack.push({ node: root, inside: isInsideComponentSource(root) });
+    if (!root) continue;
+    if (root.type === "INSTANCE" || isInsideInstance(root)) {
+      skippedInstances++;
+      continue;
+    }
+    stack.push({
+      node: root,
+      inside: onlyComponents ? isInsideComponentSource(root) : true,
+    });
   }
 
   const found = [];
@@ -597,9 +605,13 @@ async function collectComponentSourceNodes(roots) {
     if (cancelRequested) return null;
     const item = stack.pop();
     const node = item.node;
-    if (!node || node.removed || node.type === "INSTANCE") continue;
+    if (!node || node.removed) continue;
+    if (node.type === "INSTANCE") {
+      skippedInstances++;
+      continue;
+    }
 
-    const inside = item.inside || node.type === "COMPONENT";
+    const inside = onlyComponents ? item.inside || node.type === "COMPONENT" : true;
     if (inside && hasCornerFields(node)) found.push(node);
 
     if ("children" in node) {
@@ -614,7 +626,7 @@ async function collectComponentSourceNodes(roots) {
       sliceStart = Date.now();
     }
   }
-  return found;
+  return { nodes: found, skippedInstances };
 }
 
 async function scanRadius(msg) {
@@ -628,12 +640,15 @@ async function scanRadius(msg) {
   }
   const mappings = parsed.mappings;
 
-  let roots;
-  if (msg.scope === "selection" && figma.currentPage.selection.length > 0) {
-    roots = figma.currentPage.selection;
-  } else {
-    roots = [figma.currentPage];
+  const selectionScope = msg.scope === "selection";
+  if (selectionScope && figma.currentPage.selection.length === 0) {
+    figma.ui.postMessage({
+      type: "error",
+      message: "Select a layer first, or switch scope to the whole page.",
+    });
+    return;
   }
+  const roots = selectionScope ? figma.currentPage.selection : [figma.currentPage];
 
   const tokens = await loadRadiusTokens(msg.collectionKeys || []);
   if (cancelRequested) {
@@ -641,11 +656,14 @@ async function scanRadius(msg) {
     return;
   }
 
-  const nodes = await collectComponentSourceNodes(roots);
-  if (nodes == null) {
+  // Selection updates the layers you picked, including plain frames.
+  // Whole page stays on main components so instances on the canvas are not overridden.
+  const collected = await collectRadiusNodes(roots, !selectionScope);
+  if (collected == null) {
     figma.ui.postMessage({ type: "scan-cancelled" });
     return;
   }
+  const nodes = collected.nodes;
 
   const groups = new Map();
   let rawCorners = 0;
@@ -726,6 +744,8 @@ async function scanRadius(msg) {
     boundCorners,
     buttonCorners,
     tokenCount: tokens.length,
+    skippedInstances: collected.skippedInstances,
+    selectionScope,
   });
 }
 

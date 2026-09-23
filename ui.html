@@ -358,7 +358,7 @@
         <button class="link" id="addMappingBtn" type="button">Add</button>
       </div>
       <div id="mappingRows"></div>
-      <p class="map-note">Only these values change. Each corner is checked on its own, so 0 and anything not listed stay as they are. Raw corners get the new number. Corners already bound to a variable are rebound to a radius token at the new value.</p>
+      <p class="map-note">Only these values change. Each corner is checked on its own, so 0 and anything not listed stay as they are. Raw corners get the new number. Corners already bound to a variable are rebound to a radius token at the new value. With Current selection, a plain frame is included. Instances are skipped.</p>
     </section>
   </div>
 
@@ -414,7 +414,7 @@
 
 <script>
   const SPACING_CALLOUT = 'Supports spacing tokens only (padding and gap).';
-  const RADIUS_CALLOUT = 'Remaps corner radius on main components and variants using the mapping below. Instances are skipped. Buttons included in a row still need a manual check afterward.';
+  const RADIUS_CALLOUT = 'Current selection updates the layers you select, except instances. Whole page updates main components and variants only. Buttons included in a row still need a manual check afterward.';
   const SPACING_LIBRARY_TIP = 'Enable your semantic-token file as a team library first (Assets panel → Libraries), then pick its collection(s) above and scan.';
   const RADIUS_LIBRARY_TIP = 'Optional. Pick the collection that holds corner-radius tokens so corners already bound to a variable can be rebound. Local radius variables in this file are included either way. Raw corners update even if you leave this unset.';
 
@@ -462,6 +462,7 @@
   let mode = 'spacing'; // 'spacing' | 'radius'
   let libraries = [];
   let radiusSkippedBound = 0;
+  let radiusScanMeta = { selectionScope: false, skippedInstances: 0 };
   let serverGroups = []; // raw groups from the last scan (matches = exact matches only)
   let currentGroups = []; // each: { key, field, value, count, matches, included, selectedVariableId, rounded, roundedValue }
   let allTokens = [];
@@ -1043,7 +1044,12 @@
     roundToggleLabel.style.display = 'none';
 
     if (currentGroups.length === 0) {
-      resultsEl.innerHTML = '<div class="empty-note">No corners on main components match the mapping in this scope.</div>';
+      const why = radiusScanMeta.selectionScope
+        ? (radiusScanMeta.skippedInstances
+          ? 'Nothing in the selection matched. Instances are skipped — select the frame or the main component.'
+          : 'No corners in this selection match the mapping.')
+        : 'No corners on main components match the mapping on this page.';
+      resultsEl.innerHTML = '<div class="empty-note">' + why + '</div>';
       selectAllBtn.style.display = 'none';
       selectNoneBtn.style.display = 'none';
       inspectBtn.style.display = 'none';
@@ -1238,8 +1244,13 @@
         (msg.boundCorners || 0).toLocaleString() + ' bound corner(s)',
         'across ' + msg.groups.length + ' group(s)',
         msg.tokenCount.toLocaleString() + ' radius token(s)',
-        'scanned ' + msg.scannedNodeCount.toLocaleString() + ' component node(s)',
+        'scanned ' + msg.scannedNodeCount.toLocaleString() + ' node(s)',
       ];
+      if (msg.skippedInstances) parts.push(msg.skippedInstances.toLocaleString() + ' instance(s) skipped');
+      radiusScanMeta = {
+        selectionScope: !!msg.selectionScope,
+        skippedInstances: msg.skippedInstances || 0,
+      };
       if (msg.boundCorners && !msg.tokenCount) parts.push('no radius token at the target value, so bound corners cannot be rebound yet');
       if (msg.buttonCorners) parts.push(msg.buttonCorners.toLocaleString() + ' of these corners sit inside a Button component — check those by hand afterward');
       setStatus(parts.join(' · ') + '.');
