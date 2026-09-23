@@ -11,8 +11,9 @@
     font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif;
     font-size: 12px;
     margin: 0;
-    padding: 12px;
-    overflow: hidden;
+    padding: 12px 12px 20px;
+    overflow-x: hidden;
+    overflow-y: auto;
     background: var(--figma-color-bg);
     color: var(--figma-color-text);
   }
@@ -179,11 +180,30 @@
   }
 
   #results {
-    flex: 1 1 auto;
-    min-height: 72px;
-    overflow: auto;
+    flex: 0 0 auto;
+    overflow: visible;
     border: 1px solid var(--figma-color-border);
     border-radius: 4px;
+  }
+  #resizeHandle {
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    width: 16px;
+    height: 16px;
+    cursor: nwse-resize;
+    z-index: 30;
+    touch-action: none;
+  }
+  #resizeHandle::after {
+    content: "";
+    position: absolute;
+    right: 3px;
+    bottom: 3px;
+    width: 7px;
+    height: 7px;
+    border-right: 2px solid var(--figma-color-icon-secondary, var(--figma-color-border));
+    border-bottom: 2px solid var(--figma-color-icon-secondary, var(--figma-color-border));
   }
   td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   td.value, td.count { white-space: nowrap; }
@@ -455,6 +475,7 @@
   </div>
 
   <div id="results"></div>
+  <div id="resizeHandle" title="Drag to resize"></div>
 
 <script>
   const SPACING_CALLOUT = 'Supports spacing tokens only (padding and gap).';
@@ -518,6 +539,33 @@
     applyCompact(!compact);
     parent.postMessage({ pluginMessage: { type: 'resize', compact } }, '*');
   };
+
+  const resizeHandle = document.getElementById('resizeHandle');
+  function postWindowSize(width, height, persist) {
+    parent.postMessage({
+      pluginMessage: {
+        type: 'resize-window',
+        width: Math.round(width),
+        height: Math.round(height),
+        persist: !!persist,
+      },
+    }, '*');
+  }
+  resizeHandle.addEventListener('pointerdown', (event) => {
+    resizeHandle.setPointerCapture(event.pointerId);
+    const onMove = (moveEvent) => {
+      postWindowSize(moveEvent.clientX + 12, moveEvent.clientY + 12, false);
+    };
+    const onUp = (upEvent) => {
+      resizeHandle.removeEventListener('pointermove', onMove);
+      resizeHandle.removeEventListener('pointerup', onUp);
+      resizeHandle.removeEventListener('pointercancel', onUp);
+      postWindowSize(upEvent.clientX + 12, upEvent.clientY + 12, true);
+    };
+    resizeHandle.addEventListener('pointermove', onMove);
+    resizeHandle.addEventListener('pointerup', onUp);
+    resizeHandle.addEventListener('pointercancel', onUp);
+  });
   let libraries = [];
   let radiusSkippedBound = 0;
   let radiusScanMeta = { selectionScope: false, skippedInstances: 0 };

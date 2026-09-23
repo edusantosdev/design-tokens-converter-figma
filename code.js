@@ -1015,10 +1015,20 @@ const UI_COMPACT = { width: 440, height: 520 };
 
 figma.showUI(__html__, { width: UI_EXPANDED.width, height: UI_EXPANDED.height, themeColors: true });
 
-figma.clientStorage.getAsync("ui-compact").then((saved) => {
-  if (!saved) return;
-  figma.ui.resize(UI_COMPACT.width, UI_COMPACT.height);
-  figma.ui.postMessage({ type: "compact", compact: true });
+function clampWindowSize(width, height) {
+  const w = Math.max(280, Math.min(1600, Math.round(width) || UI_EXPANDED.width));
+  const h = Math.max(200, Math.min(1400, Math.round(height) || UI_EXPANDED.height));
+  return { width: w, height: h };
+}
+
+Promise.all([
+  figma.clientStorage.getAsync("ui-compact").catch(() => false),
+  figma.clientStorage.getAsync("ui-size").catch(() => null),
+]).then(([compact, size]) => {
+  if (compact) figma.ui.postMessage({ type: "compact", compact: true });
+  const saved = size && size.width && size.height ? clampWindowSize(size.width, size.height) : null;
+  const next = saved || (compact ? UI_COMPACT : null);
+  if (next) figma.ui.resize(next.width, next.height);
 }).catch(() => {});
 
 async function sendLibraries() {
@@ -1082,6 +1092,11 @@ figma.ui.onmessage = async (msg) => {
     const size = msg.compact ? UI_COMPACT : UI_EXPANDED;
     figma.ui.resize(size.width, size.height);
     figma.clientStorage.setAsync("ui-compact", !!msg.compact).catch(() => {});
+    figma.clientStorage.setAsync("ui-size", size).catch(() => {});
+  } else if (msg.type === "resize-window") {
+    const size = clampWindowSize(msg.width, msg.height);
+    figma.ui.resize(size.width, size.height);
+    if (msg.persist) figma.clientStorage.setAsync("ui-size", size).catch(() => {});
   } else if (msg.type === "close") {
     figma.closePlugin();
   }
