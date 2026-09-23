@@ -35,7 +35,13 @@ async function listLibraries() {
  * to a plain px number by walking alias chains, since semantic tokens
  * usually just point at core tokens rather than holding a literal value.
  */
-async function loadSpacingTokens(collectionKeys) {
+function scopesAllow(scopes, wanted) {
+  const list = scopes || [];
+  if (list.includes("ALL_SCOPES")) return true;
+  return wanted.some((scope) => list.includes(scope));
+}
+
+async function loadScopedTokens(collectionKeys, wantedScopes) {
   const libraryCollections = await figma.teamLibrary.getAvailableLibraryVariableCollectionsAsync();
   const selectedKeys = new Set(collectionKeys || []);
   const targetCollections = libraryCollections.filter((c) => selectedKeys.has(c.key));
@@ -54,10 +60,7 @@ async function loadSpacingTokens(collectionKeys) {
       if (libVar.resolvedType !== "FLOAT") continue;
 
       const imported = await figma.variables.importVariableByKeyAsync(libVar.key);
-
-      // Only consider tokens actually scoped for spacing usage.
-      const scopes = imported.scopes || [];
-      if (!scopes.includes("GAP") && !scopes.includes("ALL_SCOPES")) continue;
+      if (!scopesAllow(imported.scopes, wantedScopes)) continue;
 
       const value = await resolveNumericValue(imported);
       if (value == null) continue;
@@ -69,6 +72,47 @@ async function loadSpacingTokens(collectionKeys) {
         collection: col.name,
       });
     }
+  }
+  return tokens;
+}
+
+async function loadSpacingTokens(collectionKeys) {
+  return loadScopedTokens(collectionKeys, ["GAP"]);
+}
+
+async function loadRadiusTokens(collectionKeys) {
+  const tokens = [];
+  const seen = new Set();
+
+  function add(token) {
+    if (!token || seen.has(token.id)) return;
+    seen.add(token.id);
+    tokens.push(token);
+  }
+
+  if (collectionKeys && collectionKeys.length) {
+    const libraryTokens = await loadScopedTokens(collectionKeys, ["CORNER_RADIUS"]);
+    libraryTokens.forEach(add);
+  }
+
+  let locals = [];
+  try {
+    locals = await figma.variables.getLocalVariablesAsync("FLOAT");
+  } catch (e) {
+    locals = [];
+  }
+  for (const variable of locals) {
+    if (cancelRequested) return tokens;
+    if (!scopesAllow(variable.scopes, ["CORNER_RADIUS"])) continue;
+    const value = await resolveNumericValue(variable);
+    if (value == null) continue;
+    const collection = await figma.variables.getVariableCollectionByIdAsync(variable.variableCollectionId);
+    add({
+      id: variable.id,
+      name: variable.name,
+      value,
+      collection: collection ? collection.name : "Local",
+    });
   }
   return tokens;
 }
@@ -420,14 +464,13 @@ async function inspectSelection() {
 
 // ---- Radius remap -------------------------------------------------------
 //
-// One-shot migration for the border-radius scale change:
-//   4px → 6px, 8px → 12px
-// Each corner is decided on its own, so a mixed node (8, 8, 0, 0) becomes
-// (12, 12, 0, 0). Only main components and their variants are edited.
-// Instances are skipped so the pass does not write overrides. Corners already
-// bound to a variable are skipped so the binding stays intact. Buttons are
-// included; ones that were 8px become 12px and are reported so they can be
-// set to 6px by hand afterward.
+// Remaps corner radius on main components and variants using the mapping
+// the UI sends (default 4→6 and 8→12). Each corner is decided on its own,
+// so a mixed node keeps the corners that are not in the mapping.
+// Instances are skipped so the pass does not write overrides.
+// Raw corners get the new number. Corners already bound to a variable stay
+// bound: they are rebound to a corner-radius token whose resolved value is
+// the mapping target, when one is available.
 
 const CORNER_FIELDS = [
   "topLeftRadius",
@@ -436,21 +479,56 @@ const CORNER_FIELDS = [
   "bottomRightRadius",
 ];
 
-const RADIUS_MAP = [
-  { from: 4, to: 6 },
-  { from: 8, to: 12 },
-];
-
 // Figma occasionally stores 4.0000002. This catches that without treating
 // 4.5, 0, or a pill radius as a match.
 const RADIUS_EPSILON = 0.001;
 
-function mappedRadius(value) {
+function valueMatches(value, target) {
+  return typeof value === "number" && isFinite(value) && Math.abs(value - target) < RADIUS_EPSILON;
+}
+
+function normalizeRadiusMappings(list) {
+  if (!Array.isArray(list) || list.length === 0) {
+    return { error: "Add at least one radius mapping." };
+  }
+  const mappings = [];
+  const seen = new Set();
+  for (const entry of list) {
+    const from = Number(entry && entry.from);
+    const to = Number(entry && entry.to);
+    if (!isFinite(from) || !isFinite(to)) {
+      return { error: "Each mapping needs a from and a to value." };
+    }
+    if (Math.abs(from - to) < RADIUS_EPSILON) {
+      return { error: "From and to must be different." };
+    }
+    const key = String(Math.round(from * 1000) / 1000);
+    if (seen.has(key)) {
+      return { error: from + "px is mapped more than once." };
+    }
+    seen.add(key);
+    mappings.push({ from, to });
+  }
+  return { mappings };
+}
+
+function mappedRadius(value, mappings) {
   if (typeof value !== "number" || !isFinite(value)) return null;
-  for (const entry of RADIUS_MAP) {
-    if (Math.abs(value - entry.from) < RADIUS_EPSILON) return entry;
+  for (const entry of mappings) {
+    if (valueMatches(value, entry.from)) return entry;
   }
   return null;
+}
+
+function tokensAtValue(tokens, target) {
+  return tokens
+    .filter((token) => valueMatches(token.value, target))
+    .map((token) => ({
+      id: token.id,
+      name: token.name,
+      collection: token.collection,
+      value: token.value,
+    }));
 }
 
 function hasCornerFields(node) {
@@ -491,8 +569,8 @@ function isCornerBound(node, field) {
   return !!(bound && bound[field]);
 }
 
-function radiusGroupKey(entry) {
-  return "radius|" + entry.from + "|" + entry.to;
+function radiusGroupKey(entry, bound) {
+  return "radius|" + entry.from + "|" + entry.to + "|" + (bound ? "bound" : "raw");
 }
 
 function cornerCountFor(group) {
@@ -543,11 +621,24 @@ async function scanRadius(msg) {
   cancelRequested = false;
   lastLocated = null;
 
+  const parsed = normalizeRadiusMappings(msg.mappings);
+  if (parsed.error) {
+    figma.ui.postMessage({ type: "error", message: parsed.error });
+    return;
+  }
+  const mappings = parsed.mappings;
+
   let roots;
   if (msg.scope === "selection" && figma.currentPage.selection.length > 0) {
     roots = figma.currentPage.selection;
   } else {
     roots = [figma.currentPage];
+  }
+
+  const tokens = await loadRadiusTokens(msg.collectionKeys || []);
+  if (cancelRequested) {
+    figma.ui.postMessage({ type: "scan-cancelled" });
+    return;
   }
 
   const nodes = await collectComponentSourceNodes(roots);
@@ -557,9 +648,9 @@ async function scanRadius(msg) {
   }
 
   const groups = new Map();
-  let cornerCount = 0;
+  let rawCorners = 0;
+  let boundCorners = 0;
   let buttonCorners = 0;
-  let skippedBound = 0;
   let sliceStart = Date.now();
 
   for (const node of nodes) {
@@ -573,20 +664,18 @@ async function scanRadius(msg) {
 
     for (const field of CORNER_FIELDS) {
       const value = node[field];
-      const mapped = mappedRadius(value);
+      const mapped = mappedRadius(value, mappings);
       if (!mapped) continue;
-      if (isCornerBound(node, field)) {
-        skippedBound++;
-        continue;
-      }
+      const bound = isCornerBound(node, field);
 
-      const key = radiusGroupKey(mapped);
+      const key = radiusGroupKey(mapped, bound);
       let group = groups.get(key);
       if (!group) {
         group = {
           field: "radius",
           from: mapped.from,
           to: mapped.to,
+          bound,
           nodes: [],
           fieldsByNode: new Map(),
         };
@@ -599,7 +688,8 @@ async function scanRadius(msg) {
         group.nodes.push(node);
       }
       fields.push(field);
-      cornerCount++;
+      if (bound) boundCorners++;
+      else rawCorners++;
       if (inButton) buttonCorners++;
     }
 
@@ -613,49 +703,71 @@ async function scanRadius(msg) {
 
   const summary = [];
   for (const [key, group] of groups) {
+    const matches = group.bound ? tokensAtValue(tokens, group.to) : [];
     summary.push({
       key,
       kind: "radius",
+      source: group.bound ? "bound" : "raw",
       from: group.from,
       to: group.to,
       count: group.nodes.length,
       cornerCount: cornerCountFor(group),
+      matches,
     });
   }
-  summary.sort((a, b) => a.from - b.from);
+  summary.sort((a, b) => a.from - b.from || (a.source === b.source ? 0 : a.source === "raw" ? -1 : 1));
 
   figma.ui.postMessage({
     type: "radius-scan-result",
     groups: summary,
     scannedNodeCount: nodes.length,
-    cornerCount,
+    cornerCount: rawCorners + boundCorners,
+    rawCorners,
+    boundCorners,
     buttonCorners,
-    skippedBound,
+    tokenCount: tokens.length,
   });
 }
 
-async function applyRadius(keys) {
+async function applyRadius(selections) {
   cancelRequested = false;
-  const selected = new Set(keys || []);
+  const selected = selections || [];
   let updatedCorners = 0;
+  let reboundCorners = 0;
   let failedCorners = 0;
   let skippedBound = 0;
   let missingGroups = 0;
   let cancelled = false;
+  const variableCache = new Map();
+
+  async function getVariableCached(variableId) {
+    if (!variableId) return null;
+    if (variableCache.has(variableId)) return variableCache.get(variableId);
+    const variable = await figma.variables.getVariableByIdAsync(variableId);
+    variableCache.set(variableId, variable);
+    return variable;
+  }
 
   let processed = 0;
   let total = 0;
-  for (const key of selected) {
-    const group = lastScanGroups.get(key);
+  for (const sel of selected) {
+    const group = lastScanGroups.get(sel.key);
     if (group && group.fieldsByNode) total += cornerCountFor(group);
   }
 
   let sliceStart = Date.now();
 
-  outer: for (const key of selected) {
-    const group = lastScanGroups.get(key);
+  outer: for (const sel of selected) {
+    const group = lastScanGroups.get(sel.key);
     if (!group || !group.fieldsByNode) {
       missingGroups++;
+      continue;
+    }
+
+    const variable = group.bound ? await getVariableCached(sel.variableId) : null;
+    if (group.bound && !variable) {
+      failedCorners += cornerCountFor(group);
+      processed += cornerCountFor(group);
       continue;
     }
 
@@ -676,14 +788,22 @@ async function applyRadius(keys) {
           break outer;
         }
         try {
-          if (isCornerBound(node, field)) {
+          const stillBound = isCornerBound(node, field);
+          const stillMatches = valueMatches(node[field], group.from);
+          if (!stillMatches) {
+            // Value changed since the scan. Leave it alone.
+          } else if (group.bound) {
+            if (!stillBound) {
+              skippedBound++;
+            } else {
+              node.setBoundVariable(field, variable);
+              reboundCorners++;
+            }
+          } else if (stillBound) {
             skippedBound++;
           } else {
-            const mapped = mappedRadius(node[field]);
-            if (mapped && mapped.to === group.to) {
-              node[field] = mapped.to;
-              updatedCorners++;
-            }
+            node[field] = group.to;
+            updatedCorners++;
           }
         } catch (e) {
           failedCorners++;
@@ -706,7 +826,9 @@ async function applyRadius(keys) {
   figma.ui.postMessage({
     type: "apply-result",
     kind: "radius",
-    successNodes: updatedCorners,
+    successNodes: updatedCorners + reboundCorners,
+    updatedCorners,
+    reboundCorners,
     failedNodes: failedCorners,
     skippedBound,
     missingGroups,
@@ -828,7 +950,7 @@ figma.ui.onmessage = async (msg) => {
       figma.ui.postMessage({ type: "error", message: String(e && e.message ? e.message : e) });
     }
   } else if (msg.type === "apply-radius") {
-    await applyRadius(msg.keys);
+    await applyRadius(msg.selections);
   } else if (msg.type === "clear-scan") {
     lastScanGroups = new Map();
     lastLocated = null;

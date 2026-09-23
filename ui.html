@@ -194,6 +194,28 @@
   }
   .mode-switch button.active:hover { background: var(--figma-color-bg); }
 
+  .map-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    margin-top: 6px;
+  }
+  .map-row input[type="number"] {
+    width: 72px;
+    padding: 4px 6px;
+    border: 1px solid var(--figma-color-border);
+    border-radius: 4px;
+    background: var(--figma-color-bg);
+    color: var(--figma-color-text);
+    font-size: 11px;
+  }
+  .map-note {
+    margin: 6px 0 0;
+    color: var(--figma-color-text-secondary);
+    font-size: 11px;
+    line-height: 1.4;
+  }
+
   .actions { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; flex-wrap: wrap; }
 
   .round-toggle {
@@ -311,8 +333,8 @@
   <section>
     <div class="row" style="justify-content: space-between; margin-bottom: 4px;">
       <div class="row" style="gap: 6px;">
-        <h3 style="margin:0;">1. Library</h3>
-        <span class="info-tip" tabindex="0" aria-label="Enable your semantic-token file as a team library first (Assets panel → Libraries), then pick its collection(s) above and scan.">i<span class="info-tip-text">Enable your semantic-token file as a team library first (Assets panel → Libraries), then pick its collection(s) above and scan.</span></span>
+        <h3 id="libraryHeading" style="margin:0;">1. Library</h3>
+        <span class="info-tip" id="libraryTip" tabindex="0" aria-label="Enable your semantic-token file as a team library first (Assets panel → Libraries), then pick its collection(s) above and scan.">i<span class="info-tip-text" id="libraryTipText">Enable your semantic-token file as a team library first (Assets panel → Libraries), then pick its collection(s) above and scan.</span></span>
       </div>
       <button class="link" id="refreshBtn" type="button">Refresh</button>
     </div>
@@ -322,11 +344,22 @@
   </section>
 
   <section>
-    <h3>2. Collection</h3>
+    <h3 id="collectionHeading">2. Collection</h3>
     <select id="collectionSelect">
       <option value="">None selected</option>
     </select>
   </section>
+  </div>
+
+  <div id="radiusSetup" style="display:none;">
+    <section>
+      <div class="row" style="justify-content: space-between; margin-bottom: 4px;">
+        <h3 style="margin:0;">Mapping</h3>
+        <button class="link" id="addMappingBtn" type="button">Add</button>
+      </div>
+      <div id="mappingRows"></div>
+      <p class="map-note">Only these values change. Each corner is checked on its own, so 0 and anything not listed stay as they are. Raw corners get the new number. Corners already bound to a variable are rebound to a radius token at the new value.</p>
+    </section>
   </div>
 
   <section>
@@ -381,13 +414,27 @@
 
 <script>
   const SPACING_CALLOUT = 'Supports spacing tokens only (padding and gap).';
-  const RADIUS_CALLOUT = 'Remaps raw corner radius on main components and variants: 4px → 6px and 8px → 12px. Each corner is updated on its own, so a 0 stays 0. Instances and corners bound to a variable are skipped. Buttons that were 8px become 12px — set those to 6px by hand afterward.';
+  const RADIUS_CALLOUT = 'Remaps corner radius on main components and variants using the mapping below. Instances are skipped. Buttons included in a row still need a manual check afterward.';
+  const SPACING_LIBRARY_TIP = 'Enable your semantic-token file as a team library first (Assets panel → Libraries), then pick its collection(s) above and scan.';
+  const RADIUS_LIBRARY_TIP = 'Optional. Pick the collection that holds corner-radius tokens so corners already bound to a variable can be rebound. Local radius variables in this file are included either way. Raw corners update even if you leave this unset.';
 
   const modeSpacingBtn = document.getElementById('modeSpacing');
   const modeRadiusBtn = document.getElementById('modeRadius');
   const calloutText = document.getElementById('calloutText');
   const spacingSetup = document.getElementById('spacingSetup');
   const scopeHeading = document.getElementById('scopeHeading');
+  const radiusSetup = document.getElementById('radiusSetup');
+  const mappingRowsEl = document.getElementById('mappingRows');
+  const addMappingBtn = document.getElementById('addMappingBtn');
+  const libraryHeading = document.getElementById('libraryHeading');
+  const collectionHeading = document.getElementById('collectionHeading');
+  const libraryTip = document.getElementById('libraryTip');
+  const libraryTipText = document.getElementById('libraryTipText');
+
+  let radiusMappings = [
+    { from: 4, to: 6 },
+    { from: 8, to: 12 },
+  ];
 
   const scanBtn = document.getElementById('scanBtn');
   const applyBtn = document.getElementById('applyBtn');
@@ -587,13 +634,29 @@
     return byName;
   }
 
+  function getModeLibraries() {
+    if (mode !== 'radius') return getSpacingLibraries();
+    const byName = new Map();
+    libraries.forEach((c) => {
+      const name = c.libraryName || 'Library';
+      if (!byName.has(name)) byName.set(name, c);
+    });
+    return byName;
+  }
+
+  function isRadiusCollection(c) {
+    return /radius|corner/i.test(c.name || '');
+  }
+
   function renderLibrarySelect() {
-    const spacingLibraries = getSpacingLibraries();
-    const names = Array.from(spacingLibraries.keys());
+    const modeLibraries = getModeLibraries();
+    const names = Array.from(modeLibraries.keys());
     const previousLibrary = librarySelect.value;
     const previousCollectionKey = collectionSelect.value;
     if (names.length === 0) {
-      librarySelect.innerHTML = '<option value="">No libraries with a Spacing collection</option>';
+      librarySelect.innerHTML = mode === 'radius'
+        ? '<option value="">No libraries enabled</option>'
+        : '<option value="">No libraries with a Spacing collection</option>';
       librarySelect.disabled = true;
       renderCollectionSelect();
       return;
@@ -627,9 +690,19 @@
     collectionSelect.innerHTML = collections.map((c) =>
       `<option value="${escapeAttr(c.key)}">${escapeHtml(c.name)}</option>`
     ).join('');
-    const defaultCol = collections.find((c) => isSpacingCollection(c));
-    if (preferredKey && collections.some((c) => c.key === preferredKey)) {
-      collectionSelect.value = preferredKey;
+    const defaultCol = mode === 'radius'
+      ? (collections.find((c) => isRadiusCollection(c)) || collections[0])
+      : collections.find((c) => isSpacingCollection(c));
+    let useKey = preferredKey;
+    if (mode === 'radius') {
+      const preferred = collections.find((c) => c.key === preferredKey);
+      if (!preferred || !isRadiusCollection(preferred)) {
+        const radiusCol = collections.find((c) => isRadiusCollection(c));
+        if (radiusCol) useKey = radiusCol.key;
+      }
+    }
+    if (useKey && collections.some((c) => c.key === useKey)) {
+      collectionSelect.value = useKey;
     } else if (defaultCol) {
       collectionSelect.value = defaultCol.key;
     }
@@ -648,6 +721,67 @@
     updateApplyEnabled();
   }
 
+  function renderMappingRows() {
+    mappingRowsEl.innerHTML = radiusMappings.map((entry, index) => `
+      <div class="map-row" data-index="${index}">
+        <input class="map-from" type="number" step="any" min="0" value="${Number.isFinite(entry.from) ? entry.from : ''}" aria-label="From radius" />
+        <span class="round-arrow">→</span>
+        <input class="map-to" type="number" step="any" min="0" value="${Number.isFinite(entry.to) ? entry.to : ''}" aria-label="To radius" />
+        <span>px</span>
+        <button class="link map-remove" type="button">Remove</button>
+      </div>
+    `).join('');
+  }
+
+  function readRadiusMappings() {
+    const rows = Array.from(mappingRowsEl.querySelectorAll('.map-row'));
+    if (rows.length === 0) return { error: 'Add at least one mapping.' };
+    const mappings = [];
+    const seen = new Set();
+    for (const row of rows) {
+      const from = parseFloat(row.querySelector('.map-from').value);
+      const to = parseFloat(row.querySelector('.map-to').value);
+      if (!isFinite(from) || !isFinite(to)) return { error: 'Each mapping needs a from and a to value.' };
+      if (Math.abs(from - to) < 0.001) return { error: 'From and to must be different.' };
+      const key = String(Math.round(from * 1000) / 1000);
+      if (seen.has(key)) return { error: from + 'px is mapped more than once.' };
+      seen.add(key);
+      mappings.push({ from, to });
+    }
+    return { mappings };
+  }
+
+  mappingRowsEl.addEventListener('input', (e) => {
+    const row = e.target.closest('.map-row');
+    if (!row) return;
+    const index = Number(row.dataset.index);
+    if (!radiusMappings[index]) return;
+    radiusMappings[index] = {
+      from: parseFloat(row.querySelector('.map-from').value),
+      to: parseFloat(row.querySelector('.map-to').value),
+    };
+  });
+
+  mappingRowsEl.addEventListener('click', (e) => {
+    const btn = e.target.closest('.map-remove');
+    if (!btn) return;
+    const row = btn.closest('.map-row');
+    if (!row) return;
+    const index = Number(row.dataset.index);
+    radiusMappings.splice(index, 1);
+    if (radiusMappings.length === 0) radiusMappings.push({ from: '', to: '' });
+    renderMappingRows();
+  });
+
+  addMappingBtn.onclick = () => {
+    const current = readRadiusMappings();
+    radiusMappings = current.mappings || radiusMappings.slice();
+    radiusMappings.push({ from: '', to: '' });
+    renderMappingRows();
+  };
+
+  renderMappingRows();
+
   function setMode(next) {
     if (scanning || next === mode) return;
     mode = next;
@@ -656,10 +790,16 @@
     modeRadiusBtn.classList.toggle('active', radius);
     modeSpacingBtn.setAttribute('aria-selected', radius ? 'false' : 'true');
     modeRadiusBtn.setAttribute('aria-selected', radius ? 'true' : 'false');
-    spacingSetup.style.display = radius ? 'none' : '';
+    radiusSetup.style.display = radius ? '' : 'none';
+    spacingSetup.style.display = '';
+    libraryHeading.textContent = radius ? 'Library for bound corners' : '1. Library';
+    collectionHeading.textContent = radius ? 'Collection' : '2. Collection';
     scopeHeading.textContent = radius ? 'Scope' : '3. Scope';
+    libraryTip.setAttribute('aria-label', radius ? RADIUS_LIBRARY_TIP : SPACING_LIBRARY_TIP);
+    libraryTipText.textContent = radius ? RADIUS_LIBRARY_TIP : SPACING_LIBRARY_TIP;
     calloutText.textContent = radius ? RADIUS_CALLOUT : SPACING_CALLOUT;
     applyBtn.textContent = radius ? 'Apply selected radius' : 'Apply selected matches';
+    renderLibrarySelect();
     clearResults();
     setStatus('');
     parent.postMessage({ pluginMessage: { type: 'clear-scan' } }, '*');
@@ -686,6 +826,13 @@
     }
     const scope = document.getElementById('scope').value;
     if (mode === 'radius') {
+      const parsed = readRadiusMappings();
+      if (parsed.error) {
+        setStatus(parsed.error, true);
+        return;
+      }
+      radiusMappings = parsed.mappings;
+      const collectionKey = collectionSelect.value;
       setStatus('Scanning corner radius…');
       scanning = true;
       scanBtn.textContent = 'Stop scanning';
@@ -697,7 +844,14 @@
       roundToggleLabel.style.display = 'none';
       hideInspector();
       resultsEl.innerHTML = '';
-      parent.postMessage({ pluginMessage: { type: 'scan-radius', scope } }, '*');
+      parent.postMessage({
+        pluginMessage: {
+          type: 'scan-radius',
+          scope,
+          mappings: parsed.mappings,
+          collectionKeys: collectionKey ? [collectionKey] : [],
+        },
+      }, '*');
       return;
     }
     const collectionKey = collectionSelect.value;
@@ -728,14 +882,16 @@
 
   applyBtn.onclick = () => {
     if (mode === 'radius') {
-      const keys = currentGroups.filter((g) => g.included).map((g) => g.key);
-      if (keys.length === 0) return;
+      const selections = currentGroups
+        .filter((g) => g.included && (g.source !== 'bound' || g.selectedVariableId))
+        .map((g) => ({ key: g.key, variableId: g.selectedVariableId || null }));
+      if (selections.length === 0) return;
       setProgress(true, 0);
       applyBtn.disabled = true;
       scanBtn.disabled = true;
       cancelBtn.style.display = '';
       startApplyTimer();
-      parent.postMessage({ pluginMessage: { type: 'apply-radius', keys } }, '*');
+      parent.postMessage({ pluginMessage: { type: 'apply-radius', selections } }, '*');
       return;
     }
     const selections = currentGroups
@@ -758,7 +914,11 @@
 
   selectAllBtn.onclick = () => {
     currentGroups.forEach((g) => {
-      if (mode === 'radius' || g.matches.length > 0) g.included = true;
+      if (mode === 'radius') {
+        if (g.source !== 'bound' || (g.matches && g.matches.length > 0)) g.included = true;
+      } else if (g.matches.length > 0) {
+        g.included = true;
+      }
     });
     syncRowCheckboxes();
   };
@@ -806,7 +966,7 @@
 
   function updateApplyEnabled() {
     if (mode === 'radius') {
-      applyBtn.disabled = !currentGroups.some((g) => g.included);
+      applyBtn.disabled = !currentGroups.some((g) => g.included && (g.source !== 'bound' || g.selectedVariableId));
       return;
     }
     applyBtn.disabled = !currentGroups.some((g) => g.included && g.selectedVariableId);
@@ -858,24 +1018,32 @@
   }
 
   function renderRadiusGroups() {
-    const prev = new Map(currentGroups.map((g) => [g.key, { included: g.included, locateIndex: g.locateIndex }]));
+    const prev = new Map(currentGroups.map((g) => [g.key, { included: g.included, selectedVariableId: g.selectedVariableId, locateIndex: g.locateIndex }]));
     currentGroups = serverGroups.map((g) => {
+      const matches = g.matches || [];
+      const bound = g.source === 'bound';
+      const canApply = !bound || matches.length > 0;
+      let selectedVariableId = bound && matches.length ? matches[0].id : null;
+      let included = canApply;
       const p = prev.get(g.key);
+      if (p) {
+        included = p.included && canApply;
+        if (p.selectedVariableId && matches.some((m) => m.id === p.selectedVariableId)) {
+          selectedVariableId = p.selectedVariableId;
+        }
+      }
       return {
         ...g,
-        included: p ? p.included : true,
+        matches,
+        included,
+        selectedVariableId,
         locateIndex: p && typeof p.locateIndex === 'number' ? p.locateIndex : -1,
-        matches: [],
-        selectedVariableId: null,
       };
     });
     roundToggleLabel.style.display = 'none';
 
     if (currentGroups.length === 0) {
-      const boundNote = radiusSkippedBound
-        ? ' ' + radiusSkippedBound.toLocaleString() + ' matching corner(s) were left alone because they are bound to a variable.'
-        : '';
-      resultsEl.innerHTML = '<div class="empty-note">No raw 4px or 8px corners on main components in this scope.' + boundNote + '</div>';
+      resultsEl.innerHTML = '<div class="empty-note">No corners on main components match the mapping in this scope.</div>';
       selectAllBtn.style.display = 'none';
       selectNoneBtn.style.display = 'none';
       inspectBtn.style.display = 'none';
@@ -889,17 +1057,29 @@
     inspectBtn.style.display = '';
 
     const locatedKey = inspected ? inspected.key : '';
-    let html = '<table><colgroup><col style="width:28px"><col style="width:140px"><col style="width:72px"><col style="width:72px"><col style="width:28px"><col></colgroup>' +
-      '<thead><tr><th></th><th>Change</th><th>Corners</th><th>Nodes</th><th></th><th></th></tr></thead><tbody>';
+    let html = '<table><colgroup><col style="width:28px"><col style="width:120px"><col style="width:64px"><col style="width:64px"><col style="width:56px"><col style="width:28px"><col></colgroup>' +
+      '<thead><tr><th></th><th>Change</th><th>Corners</th><th>Nodes</th><th>Source</th><th></th><th>Apply as</th></tr></thead><tbody>';
     for (const g of currentGroups) {
       const isLocated = locatedKey && g.key === locatedKey;
+      const bound = g.source === 'bound';
+      const hasMatches = g.matches.length > 0;
+      let applyCell = '<span>Raw number</span>';
+      if (bound && hasMatches) {
+        applyCell = `<select class="token-select">${g.matches.map((m, i) => {
+          const isSelected = g.selectedVariableId ? m.id === g.selectedVariableId : i === 0;
+          return `<option value="${escapeAttr(m.id)}" ${isSelected ? 'selected' : ''}>${escapeHtml(m.name)} (${escapeHtml(m.collection)})</option>`;
+        }).join('')}</select>`;
+      } else if (bound) {
+        applyCell = `<span class="unmatched">no radius token at ${escapeHtml(formatPx(g.to))}</span>`;
+      }
       html += `<tr data-key="${escapeAttr(g.key)}" class="${isLocated ? 'located' : ''}">
-        <td><input type="checkbox" ${g.included ? 'checked' : ''} /></td>
+        <td><input type="checkbox" ${g.included ? 'checked' : ''} ${bound && !hasMatches ? 'disabled' : ''} /></td>
         <td class="value">${formatPx(g.from)}<span class="round-arrow">→</span>${formatPx(g.to)}</td>
         <td class="corners">${(g.cornerCount || 0).toLocaleString()}</td>
         <td class="count">${g.count.toLocaleString()}</td>
+        <td>${bound ? 'Bound' : 'Raw'}</td>
         <td class="locate"><button class="icon locate${isLocated ? ' active' : ''}" type="button" title="Show a node from this group on the canvas. Click again to cycle." aria-label="Show on canvas">${CROSSHAIR_SVG}</button></td>
-        <td></td>
+        <td>${applyCell}</td>
       </tr>`;
     }
     html += '</tbody></table>';
@@ -1046,21 +1226,22 @@
     if (msg.type === 'libraries') {
       libraries = msg.libraries || [];
       renderLibrarySelect();
-      if (getSpacingLibraries().size === 0) {
+      if (mode !== 'radius' && getSpacingLibraries().size === 0) {
         setStatus('No enabled library has a collection named Spacing.', true);
-      } else {
+      } else if (mode !== 'radius') {
         setStatus('');
       }
     } else if (msg.type === 'radius-scan-result') {
       setScanIdle();
-      radiusSkippedBound = msg.skippedBound || 0;
       const parts = [
-        msg.cornerCount.toLocaleString() + ' corner(s) to update',
+        (msg.rawCorners || 0).toLocaleString() + ' raw corner(s)',
+        (msg.boundCorners || 0).toLocaleString() + ' bound corner(s)',
         'across ' + msg.groups.length + ' group(s)',
+        msg.tokenCount.toLocaleString() + ' radius token(s)',
         'scanned ' + msg.scannedNodeCount.toLocaleString() + ' component node(s)',
       ];
-      if (msg.skippedBound) parts.push(msg.skippedBound.toLocaleString() + ' bound corner(s) skipped');
-      if (msg.buttonCorners) parts.push(msg.buttonCorners.toLocaleString() + ' of these corners sit inside a Button component — set those to 6px by hand afterward');
+      if (msg.boundCorners && !msg.tokenCount) parts.push('no radius token at the target value, so bound corners cannot be rebound yet');
+      if (msg.buttonCorners) parts.push(msg.buttonCorners.toLocaleString() + ' of these corners sit inside a Button component — check those by hand afterward');
       setStatus(parts.join(' · ') + '.');
       serverGroups = msg.groups || [];
       currentGroups = [];
@@ -1093,11 +1274,15 @@
       cancelBtn.style.display = 'none';
       cancelBtn.disabled = false;
       const radiusApply = msg.kind === 'radius';
-      const parts = [radiusApply
-        ? `Updated ${msg.successNodes.toLocaleString()} corner(s)`
-        : `Bound ${msg.successNodes.toLocaleString()} node(s)`];
+      const parts = [];
+      if (radiusApply) {
+        parts.push(`Wrote ${((msg.updatedCorners || 0)).toLocaleString()} raw corner(s)`);
+        parts.push(`rebound ${((msg.reboundCorners || 0)).toLocaleString()} bound corner(s)`);
+      } else {
+        parts.push(`Bound ${msg.successNodes.toLocaleString()} node(s)`);
+      }
       if (msg.failedNodes) parts.push(`${msg.failedNodes} failed`);
-      if (msg.skippedBound) parts.push(`${msg.skippedBound} bound corner(s) skipped`);
+      if (msg.skippedBound) parts.push(`${msg.skippedBound} corner(s) left unchanged because their binding changed since the scan`);
       if (msg.missingGroups) parts.push(`${msg.missingGroups} group(s) out of date — rescan and try again`);
       if (msg.cancelled) parts.push('cancelled — partial changes were kept, rescan to see what remains');
       parts.push(`in ${formatElapsed(elapsedMs)}`);
