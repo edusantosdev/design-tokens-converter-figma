@@ -583,6 +583,11 @@ function nameMatchesExclusion(name, exclusions) {
   return exclusions.some((pattern) => text.indexOf(pattern) !== -1);
 }
 
+function nameMatchesExact(name, names) {
+  const text = String(name || "").trim().toLowerCase();
+  return !!text && names.some((pattern) => text === pattern);
+}
+
 async function instanceSourceNames(instance, cache) {
   if (cache.has(instance.id)) return cache.get(instance.id);
   const names = [];
@@ -609,6 +614,23 @@ async function excludedByName(node, exclusions, instanceCache) {
     if (current.type === "INSTANCE") {
       const names = await instanceSourceNames(current, instanceCache);
       if (names.some((name) => nameMatchesExclusion(name, exclusions))) return true;
+    }
+    current = current.parent;
+  }
+  return false;
+}
+
+// Empty inclusions mean every layer in scope is eligible. A name matches the
+// layer itself or any ancestor frame, group, component, or instance, including
+// the main component and component set behind an instance.
+async function includedByName(node, inclusions, instanceCache) {
+  if (!inclusions.length) return true;
+  let current = node;
+  while (current && current.type !== "PAGE" && current.type !== "DOCUMENT") {
+    if (nameMatchesExact(current.name, inclusions)) return true;
+    if (current.type === "INSTANCE") {
+      const names = await instanceSourceNames(current, instanceCache);
+      if (names.some((name) => nameMatchesExact(name, inclusions))) return true;
     }
     current = current.parent;
   }
@@ -702,6 +724,7 @@ async function scanRadius(msg) {
   }
   const mappings = parsed.mappings;
   const exclusions = normalizeExclusions(msg.exclusions);
+  const inclusions = normalizeExclusions(msg.inclusions);
 
   const selectionScope = msg.scope === "selection";
   if (selectionScope && figma.currentPage.selection.length === 0) {
@@ -733,6 +756,7 @@ async function scanRadius(msg) {
   let boundCorners = 0;
   let buttonCorners = 0;
   let excludedCorners = 0;
+  let outsideIncludeCorners = 0;
   const instanceNameCache = new Map();
   let sliceStart = Date.now();
 
@@ -745,6 +769,7 @@ async function scanRadius(msg) {
     const component = owningComponent(node);
     const inButton = !!(component && /button/i.test(component.name));
     const excluded = await excludedByName(node, exclusions, instanceNameCache);
+    const included = await includedByName(node, inclusions, instanceNameCache);
 
     for (const field of CORNER_FIELDS) {
       const value = node[field];
@@ -752,6 +777,10 @@ async function scanRadius(msg) {
       if (!mapped) continue;
       if (excluded) {
         excludedCorners++;
+        continue;
+      }
+      if (!included) {
+        outsideIncludeCorners++;
         continue;
       }
       const bound = isCornerBound(node, field);
@@ -814,6 +843,8 @@ async function scanRadius(msg) {
     boundCorners,
     buttonCorners,
     excludedCorners,
+    outsideIncludeCorners,
+    inclusionActive: inclusions.length > 0,
     tokenCount: tokens.length,
     skippedInstances: collected.skippedInstances,
     selectionScope,

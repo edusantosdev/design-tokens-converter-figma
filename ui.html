@@ -420,6 +420,14 @@
     </section>
     <section>
       <div class="row" style="justify-content: space-between; margin-bottom: 4px;">
+        <h3 style="margin:0;">Inclusions</h3>
+        <button class="link" id="addInclusionBtn" type="button">Add</button>
+      </div>
+      <div id="inclusionRows"></div>
+      <p class="map-note">Only change a frame, layer, or component whose name matches one of these exactly. Nested layers inside a match are included, and so are variants and instances of a matching component. Leave this empty to update every layer in scope. Matching is case-insensitive.</p>
+    </section>
+    <section>
+      <div class="row" style="justify-content: space-between; margin-bottom: 4px;">
         <h3 style="margin:0;">Exclusions</h3>
         <button class="link" id="addExclusionBtn" type="button">Add</button>
       </div>
@@ -926,6 +934,58 @@
 
   renderMappingRows();
 
+  const inclusionRowsEl = document.getElementById('inclusionRows');
+  const addInclusionBtn = document.getElementById('addInclusionBtn');
+  let radiusInclusions = [];
+
+  function renderInclusionRows() {
+    inclusionRowsEl.innerHTML = radiusInclusions.map((entry, index) => `
+      <div class="map-row" data-index="${index}">
+        <input class="inclusion-name" type="text" value="${escapeAttr(entry)}" placeholder="Card" aria-label="Included frame, layer, or component name" />
+        <button class="link inclusion-remove" type="button">Remove</button>
+      </div>
+    `).join('');
+  }
+
+  function readNameList(container, inputClass) {
+    const seen = new Set();
+    const names = [];
+    container.querySelectorAll('.' + inputClass).forEach((input) => {
+      const text = input.value.trim();
+      const key = text.toLowerCase();
+      if (!text || seen.has(key)) return;
+      seen.add(key);
+      names.push(text);
+    });
+    return names;
+  }
+
+  inclusionRowsEl.addEventListener('input', (e) => {
+    const row = e.target.closest('.map-row');
+    if (!row || !e.target.classList.contains('inclusion-name')) return;
+    radiusInclusions[Number(row.dataset.index)] = e.target.value;
+  });
+
+  inclusionRowsEl.addEventListener('click', (e) => {
+    const btn = e.target.closest('.inclusion-remove');
+    if (!btn) return;
+    const row = btn.closest('.map-row');
+    if (!row) return;
+    radiusInclusions.splice(Number(row.dataset.index), 1);
+    renderInclusionRows();
+  });
+
+  addInclusionBtn.onclick = () => {
+    radiusInclusions = readNameList(inclusionRowsEl, 'inclusion-name');
+    radiusInclusions.push('');
+    renderInclusionRows();
+    const inputs = inclusionRowsEl.querySelectorAll('.inclusion-name');
+    const last = inputs[inputs.length - 1];
+    if (last) last.focus();
+  };
+
+  renderInclusionRows();
+
   const exclusionRowsEl = document.getElementById('exclusionRows');
   const addExclusionBtn = document.getElementById('addExclusionBtn');
   let radiusExclusions = ['Button'];
@@ -940,16 +1000,7 @@
   }
 
   function readExclusions() {
-    const seen = new Set();
-    const exclusions = [];
-    exclusionRowsEl.querySelectorAll('.exclusion-name').forEach((input) => {
-      const text = input.value.trim();
-      const key = text.toLowerCase();
-      if (!text || seen.has(key)) return;
-      seen.add(key);
-      exclusions.push(text);
-    });
-    return exclusions;
+    return readNameList(exclusionRowsEl, 'exclusion-name');
   }
 
   exclusionRowsEl.addEventListener('input', (e) => {
@@ -1047,6 +1098,7 @@
           mappings: parsed.mappings,
           collectionKeys: collectionKey ? [collectionKey] : [],
           includeInstances: document.getElementById('instanceOverride').checked,
+          inclusions: readNameList(inclusionRowsEl, 'inclusion-name'),
           exclusions: readExclusions(),
         },
       }, '*');
@@ -1453,6 +1505,7 @@
         'scanned ' + msg.scannedNodeCount.toLocaleString() + ' node(s)',
       ];
       if (msg.skippedInstances) parts.push(msg.skippedInstances.toLocaleString() + ' instance(s) skipped');
+      if (msg.inclusionActive) parts.push((msg.outsideIncludeCorners || 0).toLocaleString() + ' corner(s) skipped because the layer name was not included');
       if (msg.excludedCorners) parts.push(msg.excludedCorners.toLocaleString() + ' corner(s) excluded by component name');
       radiusScanMeta = {
         selectionScope: !!msg.selectionScope,
