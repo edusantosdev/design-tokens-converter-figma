@@ -469,9 +469,9 @@ async function inspectSelection() {
 // so a mixed node keeps the corners that are not in the mapping.
 // Instances are skipped unless "Overwrite instance values" is checked.
 // Checking it writes overrides on those instances, including nested frames.
-// Raw corners get the new number. Corners already bound to a variable stay
-// bound: they are rebound to a corner-radius token whose resolved value is
-// the mapping target, when one is available.
+// Raw corners get the new number, or a token at that number when one is chosen.
+// Corners already bound to a variable are rebound to a token, or written as a
+// number when the user picks Raw number. That removes the variable.
 
 const CORNER_FIELDS = [
   "topLeftRadius",
@@ -922,7 +922,13 @@ async function applyRadius(selections) {
               reboundCorners++;
             }
           } else if (stillBound) {
-            skippedBound++;
+            if (sel.writeRaw) {
+              node.setBoundVariable(field, null);
+              node[field] = group.to;
+              updatedCorners++;
+            } else {
+              skippedBound++;
+            }
           } else {
             node[field] = group.to;
             updatedCorners++;

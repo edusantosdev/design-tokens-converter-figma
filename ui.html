@@ -411,7 +411,7 @@
         <button class="link" id="addMappingBtn" type="button">Add</button>
       </div>
       <div id="mappingRows"></div>
-      <p class="map-note">Only these values change. Each corner is checked on its own, so 0 and anything not listed stay as they are. Raw corners can be bound to a radius token at the new value, or written as a number. Corners already bound to a variable are rebound to a token.</p>
+      <p class="map-note">Only these values change. Each corner is checked on its own, so 0 and anything not listed stay as they are. A corner can be bound to a radius token at the new value, or written as a number. Writing a number on a bound corner removes its variable.</p>
       <label class="round-toggle" style="margin-top: 8px;">
         <input type="checkbox" id="instanceOverride" />
         <span>Overwrite instance values</span>
@@ -1133,8 +1133,12 @@
   applyBtn.onclick = () => {
     if (mode === 'radius') {
       const selections = currentGroups
-        .filter((g) => g.included && (g.source !== 'bound' || g.selectedVariableId))
-        .map((g) => ({ key: g.key, variableId: g.selectedVariableId || null }));
+        .filter((g) => g.included)
+        .map((g) => ({
+          key: g.key,
+          variableId: g.selectedVariableId || null,
+          writeRaw: !g.selectedVariableId,
+        }));
       if (selections.length === 0) return;
       setProgress(true, 0);
       applyBtn.disabled = true;
@@ -1165,7 +1169,7 @@
   selectAllBtn.onclick = () => {
     currentGroups.forEach((g) => {
       if (mode === 'radius') {
-        if (g.source !== 'bound' || (g.matches && g.matches.length > 0)) g.included = true;
+        g.included = true;
       } else if (g.matches.length > 0) {
         g.included = true;
       }
@@ -1216,7 +1220,7 @@
 
   function updateApplyEnabled() {
     if (mode === 'radius') {
-      applyBtn.disabled = !currentGroups.some((g) => g.included && (g.source !== 'bound' || g.selectedVariableId));
+      applyBtn.disabled = !currentGroups.some((g) => g.included);
       return;
     }
     applyBtn.disabled = !currentGroups.some((g) => g.included && g.selectedVariableId);
@@ -1272,15 +1276,14 @@
     currentGroups = serverGroups.map((g) => {
       const matches = g.matches || [];
       const bound = g.source === 'bound';
-      const canApply = !bound || matches.length > 0;
       let selectedVariableId = matches.length ? matches[0].id : null;
-      let included = canApply;
+      let included = !bound || matches.length > 0;
       const p = prev.get(g.key);
       if (p) {
-        included = p.included && canApply;
+        included = p.included;
         if (p.selectedVariableId && matches.some((m) => m.id === p.selectedVariableId)) {
           selectedVariableId = p.selectedVariableId;
-        } else if (!bound && !p.selectedVariableId) {
+        } else if (!p.selectedVariableId) {
           selectedVariableId = null;
         }
       }
@@ -1322,20 +1325,19 @@
       const isLocated = locatedKey && g.key === locatedKey;
       const bound = g.source === 'bound';
       const hasMatches = g.matches.length > 0;
-      let applyCell = '<span>Raw number</span>';
+      const rawLabel = bound && !hasMatches
+        ? `Raw number (no token at ${formatPx(g.to)})`
+        : 'Raw number';
+      let applyCell = `<span title="${escapeAttr(bound ? 'Removes the variable and writes the number.' : '')}">${escapeHtml(rawLabel)}</span>`;
       if (hasMatches) {
-        const rawOption = bound
-          ? ''
-          : `<option value="" ${g.selectedVariableId ? '' : 'selected'}>Raw number</option>`;
-        applyCell = `<select class="token-select">${rawOption}${g.matches.map((m) => {
+        const rawOption = `<option value="" ${g.selectedVariableId ? '' : 'selected'}>${escapeHtml(rawLabel)}</option>`;
+        applyCell = `<select class="token-select" title="${bound ? 'Raw number removes the variable and writes the number.' : ''}">${rawOption}${g.matches.map((m) => {
           const isSelected = g.selectedVariableId === m.id;
           return `<option value="${escapeAttr(m.id)}" ${isSelected ? 'selected' : ''}>${escapeHtml(m.name)} (${escapeHtml(m.collection)})</option>`;
         }).join('')}</select>`;
-      } else if (bound) {
-        applyCell = `<span class="unmatched">no radius token at ${escapeHtml(formatPx(g.to))}</span>`;
       }
       html += `<tr data-key="${escapeAttr(g.key)}" class="${isLocated ? 'located' : ''}">
-        <td><input type="checkbox" ${g.included ? 'checked' : ''} ${bound && !hasMatches ? 'disabled' : ''} /></td>
+        <td><input type="checkbox" ${g.included ? 'checked' : ''} /></td>
         <td class="value">${formatPx(g.from)}<span class="round-arrow">→</span>${formatPx(g.to)}</td>
         <td class="corners">${(g.cornerCount || 0).toLocaleString()}</td>
         <td class="count">${g.count.toLocaleString()}</td>
@@ -1458,7 +1460,7 @@
       g.included = e.target.checked;
     } else if (e.target.matches('select.token-select')) {
       g.selectedVariableId = e.target.value || null;
-      const isOverwrite = g.matches.length === 0;
+      const isOverwrite = mode !== 'radius' && g.matches.length === 0;
       if (isOverwrite) {
         g.included = !!g.selectedVariableId;
         e.target.classList.toggle('unmatched', !g.selectedVariableId);
@@ -1511,7 +1513,7 @@
         selectionScope: !!msg.selectionScope,
         skippedInstances: msg.skippedInstances || 0,
       };
-      if (msg.boundCorners && !msg.tokenCount) parts.push('no radius token at the target value, so bound corners cannot be rebound yet');
+      if (msg.boundCorners && !msg.tokenCount) parts.push('no radius token at the target value — choose Raw number to write it without a variable');
       if (msg.buttonCorners) parts.push(msg.buttonCorners.toLocaleString() + ' of these corners sit inside a Button component — check those by hand afterward');
       setStatus(parts.join(' · ') + '.');
       serverGroups = msg.groups || [];
