@@ -1047,7 +1047,7 @@ async function apply(selections) {
 
 // ---- Bootstrap ----------------------------------------------------------
 
-const UI_EXPANDED = { width: 760, height: 720 };
+const UI_EXPANDED = { width: 640, height: 520 };
 const UI_COMPACT = { width: 440, height: 520 };
 
 figma.showUI(__html__, { width: UI_EXPANDED.width, height: UI_EXPANDED.height, themeColors: true });
