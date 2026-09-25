@@ -1047,14 +1047,13 @@ async function apply(selections) {
 
 // ---- Bootstrap ----------------------------------------------------------
 
-const UI_EXPANDED = { width: 640, height: 520 };
-const UI_COMPACT = { width: 440, height: 520 };
+const UI_SIZE = { width: 720, height: 640 };
 
-figma.showUI(__html__, { width: UI_EXPANDED.width, height: UI_EXPANDED.height, themeColors: true });
+figma.showUI(__html__, { width: UI_SIZE.width, height: UI_SIZE.height, themeColors: true });
 
 function clampWindowSize(width, height) {
-  const w = Math.max(280, Math.min(1600, Math.round(width) || UI_EXPANDED.width));
-  const h = Math.max(200, Math.min(1400, Math.round(height) || UI_EXPANDED.height));
+  const w = Math.max(360, Math.min(1600, Math.round(width) || UI_SIZE.width));
+  const h = Math.max(320, Math.min(1400, Math.round(height) || UI_SIZE.height));
   return { width: w, height: h };
 }
 
@@ -1062,10 +1061,14 @@ Promise.all([
   figma.clientStorage.getAsync("ui-compact").catch(() => false),
   figma.clientStorage.getAsync("ui-size").catch(() => null),
 ]).then(([compact, size]) => {
-  if (compact) figma.ui.postMessage({ type: "compact", compact: true });
   const saved = size && size.width && size.height ? clampWindowSize(size.width, size.height) : null;
-  const next = saved || (compact ? UI_COMPACT : null);
+  const cramped = !!compact || (saved && saved.width < 560);
+  const next = cramped ? UI_SIZE : saved;
   if (next) figma.ui.resize(next.width, next.height);
+  if (cramped) {
+    figma.clientStorage.setAsync("ui-compact", false).catch(() => {});
+    figma.clientStorage.setAsync("ui-size", UI_SIZE).catch(() => {});
+  }
 }).catch(() => {});
 
 async function sendLibraries() {
@@ -1125,11 +1128,6 @@ figma.ui.onmessage = async (msg) => {
     } catch (e) {
       figma.ui.postMessage({ type: "error", message: String(e && e.message ? e.message : e) });
     }
-  } else if (msg.type === "resize") {
-    const size = msg.compact ? UI_COMPACT : UI_EXPANDED;
-    figma.ui.resize(size.width, size.height);
-    figma.clientStorage.setAsync("ui-compact", !!msg.compact).catch(() => {});
-    figma.clientStorage.setAsync("ui-size", size).catch(() => {});
   } else if (msg.type === "resize-window") {
     const size = clampWindowSize(msg.width, msg.height);
     figma.ui.resize(size.width, size.height);

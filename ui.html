@@ -11,47 +11,32 @@
     font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif;
     font-size: 12px;
     margin: 0;
-    padding: 12px 12px 20px;
+    gap: 16px;
+    padding: 16px 16px 20px;
     overflow-x: hidden;
     overflow-y: auto;
     background: var(--figma-color-bg);
     color: var(--figma-color-text);
   }
-  .top {
+  #spacingSetup, #radiusSetup {
     display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 10px;
+    flex-direction: column;
+    gap: 16px;
   }
-  .top .mode-switch { flex: 1; margin: 0; }
-  body.compact { padding: 8px; }
-  body.compact .top { margin-bottom: 6px; }
-  body.compact .form-grid { grid-template-columns: 1fr; margin-bottom: 8px; }
-  body.compact .filters { grid-template-columns: 1fr; }
-  body.compact .block { margin-bottom: 8px; }
-
-  .form-grid {
-    display: grid;
-    grid-template-columns: minmax(0, 1.5fr) minmax(0, 1.1fr) minmax(0, 0.9fr);
-    gap: 8px;
-    margin-bottom: 10px;
+  .section {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
   }
-  #spacingSetup { display: contents; }
   .field-label {
     display: flex;
     align-items: center;
     gap: 6px;
-    margin-bottom: 4px;
+    margin: 0;
     font-size: 11px;
     color: var(--figma-color-text-secondary);
   }
-  .field-label .link { margin-left: 2px; }
-  .block { margin-bottom: 10px; }
-  .filters {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 8px 12px;
-  }
+  .field-label .link { margin-left: auto; }
 
   .row { display: flex; gap: 8px; align-items: center; }
 
@@ -142,9 +127,10 @@
     font-size: 11px;
     line-height: 1.4;
     color: var(--figma-color-text-secondary);
-    margin: 0 0 8px;
-    min-height: 14px;
+    margin: 0;
+    min-height: 0;
   }
+  #status:empty { display: none; }
   #status.error { color: var(--figma-color-text-danger); }
 
   table {
@@ -232,11 +218,16 @@
   }
   .mode-switch button.active:hover { background: var(--figma-color-bg); }
 
+  #mappingRows, #inclusionRows, #exclusionRows {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  #mappingRows:empty, #inclusionRows:empty, #exclusionRows:empty { display: none; }
   .map-row {
     display: flex;
-    gap: 6px;
+    gap: 8px;
     align-items: center;
-    margin-top: 6px;
   }
   .map-row input[type="text"] {
     flex: 1;
@@ -257,13 +248,12 @@
     color: var(--figma-color-text);
     font-size: 11px;
   }
-  .actions { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
+  .actions { display: flex; gap: 8px; align-items: center; }
   .actions-gap { flex: 1; }
   .round-toggle {
     display: flex;
     align-items: center;
     gap: 6px;
-    margin-bottom: 8px;
     font-size: 11px;
     color: var(--figma-color-text);
     cursor: pointer;
@@ -357,47 +347,43 @@
 </style>
 </head>
 <body>
-  <div class="top">
-    <div class="mode-switch" role="tablist">
-      <button type="button" id="modeSpacing" class="active" role="tab" aria-selected="true">Spacing</button>
-      <button type="button" id="modeRadius" role="tab" aria-selected="false">Radius</button>
-    </div>
-    <button class="link" id="compactBtn" type="button" aria-pressed="false">Compact</button>
+  <div class="mode-switch" role="tablist">
+    <button type="button" id="modeSpacing" class="active" role="tab" aria-selected="true">Spacing</button>
+    <button type="button" id="modeRadius" role="tab" aria-selected="false">Radius</button>
   </div>
 
-  <div class="form-grid">
-    <div id="spacingSetup">
-      <div class="field">
-        <div class="field-label">
-          <span>Library</span>
-          <span class="info-tip" id="libraryTip" tabindex="0" aria-label="Enable your semantic-token file as a team library first (Assets panel → Libraries), then pick its collection and scan.">i<span class="info-tip-text" id="libraryTipText">Enable your semantic-token file as a team library first (Assets panel → Libraries), then pick its collection and scan.</span></span>
-          <button class="link" id="refreshBtn" type="button">Refresh</button>
-        </div>
-        <select id="librarySelect">
-          <option value="">Loading libraries…</option>
-        </select>
-      </div>
-      <div class="field">
-        <div class="field-label"><span>Collection</span></div>
-        <select id="collectionSelect">
-          <option value="">None selected</option>
-        </select>
-      </div>
-    </div>
-    <div class="field">
+  <div id="spacingSetup">
+    <div class="section">
       <div class="field-label">
-        <span>Scope</span>
-        <span class="info-tip" id="scopeTip" tabindex="0" aria-label="Scan the current selection or the whole page. Spacing covers padding and gap.">i<span class="info-tip-text" id="scopeTipText">Scan the current selection or the whole page. Spacing covers padding and gap.</span></span>
+        <span>Library</span>
+        <span class="info-tip" id="libraryTip" tabindex="0" aria-label="Enable your semantic-token file as a team library first (Assets panel → Libraries), then pick its collection and scan.">i<span class="info-tip-text" id="libraryTipText">Enable your semantic-token file as a team library first (Assets panel → Libraries), then pick its collection and scan.</span></span>
+        <button class="link" id="refreshBtn" type="button">Refresh</button>
       </div>
-      <select id="scope">
-        <option value="selection">Current selection</option>
-        <option value="page">Whole page</option>
+      <select id="librarySelect">
+        <option value="">Loading libraries…</option>
+      </select>
+    </div>
+    <div class="section">
+      <div class="field-label"><span>Collection</span></div>
+      <select id="collectionSelect">
+        <option value="">None selected</option>
       </select>
     </div>
   </div>
 
+  <div class="section">
+    <div class="field-label">
+      <span>Scope</span>
+      <span class="info-tip" id="scopeTip" tabindex="0" aria-label="Scan the current selection or the whole page. Spacing covers padding and gap.">i<span class="info-tip-text" id="scopeTipText">Scan the current selection or the whole page. Spacing covers padding and gap.</span></span>
+    </div>
+    <select id="scope">
+      <option value="selection">Current selection</option>
+      <option value="page">Whole page</option>
+    </select>
+  </div>
+
   <div id="radiusSetup" style="display:none;">
-    <div class="block">
+    <div class="section">
       <div class="field-label">
         <span>Mapping</span>
         <span class="info-tip" tabindex="0" aria-label="Only these values change. Each corner is checked on its own, so 0 and anything not listed stay as they are. A corner can be bound to a radius token at the new value, or written as a number. Writing a number on a bound corner removes its variable.">i<span class="info-tip-text">Only these values change. Each corner is checked on its own, so 0 and anything not listed stay as they are. A corner can be bound to a radius token at the new value, or written as a number. Writing a number on a bound corner removes its variable.</span></span>
@@ -410,23 +396,21 @@
         <span class="info-tip" tabindex="0" aria-label="Updates frames inside instances too, including nested frames. That writes an override on the instance, so a later edit to the main component will not replace it.">i<span class="info-tip-text">Updates frames inside instances too, including nested frames. That writes an override on the instance, so a later edit to the main component will not replace it.</span></span>
       </label>
     </div>
-    <div class="filters">
-      <div>
-        <div class="field-label">
-          <span>Inclusions</span>
-          <span class="info-tip" tabindex="0" aria-label="Only change a frame, layer, or component whose name matches one of these exactly. Nested layers, variants, and instances of a match are included. Leave this empty to update every layer in scope. Matching is case-insensitive.">i<span class="info-tip-text">Only change a frame, layer, or component whose name matches one of these exactly. Nested layers, variants, and instances of a match are included. Leave this empty to update every layer in scope. Matching is case-insensitive.</span></span>
-          <button class="link" id="addInclusionBtn" type="button">Add</button>
-        </div>
-        <div id="inclusionRows"></div>
+    <div class="section">
+      <div class="field-label">
+        <span>Inclusions</span>
+        <span class="info-tip" tabindex="0" aria-label="Only change a frame, layer, or component whose name matches one of these exactly. Nested layers, variants, and instances of a match are included. Leave this empty to update every layer in scope. Matching is case-insensitive.">i<span class="info-tip-text">Only change a frame, layer, or component whose name matches one of these exactly. Nested layers, variants, and instances of a match are included. Leave this empty to update every layer in scope. Matching is case-insensitive.</span></span>
+        <button class="link" id="addInclusionBtn" type="button">Add</button>
       </div>
-      <div>
-        <div class="field-label">
-          <span>Exclusions</span>
-          <span class="info-tip" tabindex="0" aria-label="Skip a component when its name contains one of these, including variants and instances. Button also skips Icon Button. Matching is case-insensitive.">i<span class="info-tip-text">Skip a component when its name contains one of these, including variants and instances. Button also skips Icon Button. Matching is case-insensitive.</span></span>
-          <button class="link" id="addExclusionBtn" type="button">Add</button>
-        </div>
-        <div id="exclusionRows"></div>
+      <div id="inclusionRows"></div>
+    </div>
+    <div class="section">
+      <div class="field-label">
+        <span>Exclusions</span>
+        <span class="info-tip" tabindex="0" aria-label="Skip a component when its name contains one of these, including variants and instances. Button also skips Icon Button. Matching is case-insensitive.">i<span class="info-tip-text">Skip a component when its name contains one of these, including variants and instances. Button also skips Icon Button. Matching is case-insensitive.</span></span>
+        <button class="link" id="addExclusionBtn" type="button">Add</button>
       </div>
+      <div id="exclusionRows"></div>
     </div>
   </div>
 
@@ -435,8 +419,8 @@
     <button id="applyBtn" class="secondary" disabled>Apply</button>
     <button id="cancelBtn" class="secondary" type="button" style="display:none;">Cancel</button>
     <span class="actions-gap"></span>
-    <button id="selectAllBtn" class="link" type="button" style="display:none;" title="Select all matched">All</button>
-    <button id="selectNoneBtn" class="link" type="button" style="display:none;" title="Select none">None</button>
+    <button id="selectAllBtn" class="link" type="button" style="display:none;">Select all matched</button>
+    <button id="selectNoneBtn" class="link" type="button" style="display:none;">Select none</button>
     <button id="inspectBtn" class="icon icon-label" type="button" title="Inspect the current canvas selection" style="display:none;">
       <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
         <circle cx="8" cy="8" r="3.1" stroke="currentColor" stroke-width="1.5"/>
@@ -447,7 +431,7 @@
   </div>
   <label id="roundToggleLabel" class="round-toggle" style="display:none;">
     <input type="checkbox" id="roundToggle" />
-    <span>Snap within</span>
+    <span>Snap to nearest token within</span>
     <input type="number" id="roundTolerance" min="0" step="0.5" value="2" />
     <span>px</span>
     <span class="info-tip" tabindex="0" aria-label="For values with no exact token, offer the closest token whose value is within this many px. Applying binds that token, so the node value snaps to it.">i<span class="info-tip-text">For values with no exact token, offer the closest token whose value is within this many px (e.g. 45.02px → 44px). If several tokens are within range they're listed nearest-first. Applying binds the chosen token, so the node's value snaps to it.</span></span>
@@ -480,7 +464,6 @@
   const SPACING_SCOPE_TIP = 'Scan the current selection or the whole page. Spacing covers padding and gap.';
   const RADIUS_SCOPE_TIP = 'Selection updates the layers you select. Whole page updates main components and variants.';
 
-  const compactBtn = document.getElementById('compactBtn');
   const modeSpacingBtn = document.getElementById('modeSpacing');
   const modeRadiusBtn = document.getElementById('modeRadius');
   const radiusSetup = document.getElementById('radiusSetup');
@@ -520,19 +503,6 @@
   const progressFill = document.getElementById('progressFill');
 
   let mode = 'spacing'; // 'spacing' | 'radius'
-  let compact = false;
-
-  function applyCompact(next) {
-    compact = !!next;
-    document.body.classList.toggle('compact', compact);
-    compactBtn.textContent = compact ? 'Expand' : 'Compact';
-    compactBtn.setAttribute('aria-pressed', compact ? 'true' : 'false');
-  }
-
-  compactBtn.onclick = () => {
-    applyCompact(!compact);
-    parent.postMessage({ pluginMessage: { type: 'resize', compact } }, '*');
-  };
 
   const resizeHandle = document.getElementById('resizeHandle');
   let resizeDrag = null;
@@ -1467,9 +1437,7 @@
     const msg = event.data.pluginMessage;
     if (!msg) return;
 
-    if (msg.type === 'compact') {
-      applyCompact(!!msg.compact);
-    } else if (msg.type === 'libraries') {
+    if (msg.type === 'libraries') {
       libraries = msg.libraries || [];
       renderLibrarySelect();
       if (mode !== 'radius' && getSpacingLibraries().size === 0) {
